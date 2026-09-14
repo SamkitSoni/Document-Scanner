@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { NotFoundError, ValidationError } from '../common/errors.js';
 import { DOCUMENT_STATUSES } from '../common/types.js';
+import { env } from '../config/env.js';
 import { validatedQuery } from '../middleware/validate.js';
 import * as documentsService from '../services/documents.service.js';
 
@@ -200,6 +201,24 @@ export async function getFile(req: Request, res: Response): Promise<void> {
     'Content-Disposition',
     `inline; filename="${document.filename.replace(/["\\]/g, '')}"`,
   );
+
+  // The frontend embeds this response in an <object> from a different origin,
+  // which helmet's default `frame-ancestors 'self'` (and the legacy
+  // X-Frame-Options) would block. Both are narrowed to the configured frontend
+  // origins for this route only, so the rest of the API keeps helmet's
+  // defaults. `X-Frame-Options` has no multi-origin form and is superseded by
+  // `frame-ancestors`, so it is removed rather than rewritten.
+  const frameAncestors = env.CORS_ORIGIN.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .join(' ');
+
+  res.setHeader(
+    'Content-Security-Policy',
+    `default-src 'none'; object-src 'self'; frame-ancestors 'self' ${frameAncestors}`,
+  );
+  res.removeHeader('X-Frame-Options');
+
   res.send(data);
 }
 

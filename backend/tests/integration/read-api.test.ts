@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app.js';
+import { env } from '../../src/config/env.js';
 import { makePdf } from '../fixtures/pdf.js';
 import { prisma, resetDatabase } from '../helpers/db.js';
 
@@ -178,5 +179,21 @@ describe('GET /api/documents/:id/file', () => {
     expect(res.headers['content-type']).toContain('application/pdf');
     expect(res.headers['content-disposition']).toContain('inline');
     expect(res.body.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
+  /**
+   * The detail view embeds this response in an <object> served from the
+   * frontend's origin. Helmet's defaults (`frame-ancestors 'self'` plus
+   * `X-Frame-Options: SAMEORIGIN`) block that, and the failure is invisible
+   * without a browser: the request returns 200 and the frame renders empty.
+   */
+  it('allows the frontend origin to embed the PDF', async () => {
+    const res = await request(app).get(`/api/documents/${processedId}/file`).expect(200);
+
+    expect(res.headers['content-security-policy']).toContain(
+      `frame-ancestors 'self' ${env.CORS_ORIGIN}`,
+    );
+    // Superseded by frame-ancestors, and it has no multi-origin form.
+    expect(res.headers['x-frame-options']).toBeUndefined();
   });
 });
