@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Lifecycle of a document. UPLOADED and RETRY_PENDING are the claimable
+/// states; PROCESSED, VALIDATION_FAILED and FAILED are terminal.
+enum DocumentStatus {
+  UPLOADED
+  RETRY_PENDING
+  PROCESSING
+  PROCESSED
+  VALIDATION_FAILED
+  FAILED
+}
+
+enum DocumentType {
+  FINANCIAL_STATEMENT
+  BANK_STATEMENT
+  REGISTRATION_CERTIFICATE
+  TAX_RETURN
+  OTHER
+}
+
+model Document {
+  id           String       @id
+  filename     String
+  mimeType     String       @map("mime_type")
+  sizeBytes    Int          @map("size_bytes")
+  documentType DocumentType @map("document_type")
+
+  /// SHA-256 of the file bytes. Unique: this is how duplicate uploads are
+  /// detected, enforced at the storage layer so concurrent uploads cannot race.
+  contentHash String @unique @map("content_hash") @db.Char(64)
+
+  /// Opaque handle returned by the storage driver (disk path or row id).
+  storageKey String @map("storage_key")
+
+  status       DocumentStatus @default(UPLOADED)
+  attemptCount Int            @default(0) @map("attempt_count")
+
+  /// Queue columns. A document is claimable when its status is UPLOADED or
+  /// RETRY_PENDING and nextAttemptAt has passed. lockedAt is the lease stamp
+  /// used by the stale-job reaper to reclaim abandoned work.
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  lockedAt      DateTime? @map("locked_at")
+
+  /// Stable failure code (e.g. PROCESSOR_TIMEOUT), never a stack trace.
+  failureReason    String? @map("failure_reason")
+  extractedData    Json?   @map("extracted_data")
+  validationErrors Json?   @map("validation_errors")
+  metadata         Json    @default("{}")
+
+  /// Raw bytes, used only when STORAGE_DRIVER=postgres (deployed environments
+  /// where the filesystem is ephemeral).
+  fileData Bytes? @map("file_data")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  events DocumentEvent[]
+
+  @@index([status])
+  @@index([documentType])
+  @@index([createdAt(sort: Desc)])
+  @@map("documents")
+}
+
+/// Append-only log of every state transition. Never updated or deleted, so the
+/// history cannot drift from the document's current state. Written in the same
+/// transaction as the document update.
+model DocumentEvent {
+  id         BigInt         @id @default(autoincrement())
+  documentId String         @map("document_id")
+  status     DocumentStatus
+  attempt    Int?
+  reason     String?
+  detail     Json?
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, createdAt])
+  @@map("document_events")
+}
