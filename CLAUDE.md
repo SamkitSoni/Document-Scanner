@@ -329,6 +329,19 @@ the full middleware stack without binding ports.
   isolated temp `STORAGE_PATH`; never the dev uploads directory.
 - **Failure reasons:** stable codes from `FailureReason` in `common/types.ts`,
   never free text.
+- **Docs move with the code.** Every change updates **both** files in the same
+  commit as the change itself, never as a catch-up pass afterwards:
+  - **`CLAUDE.md`** — the build log. Current state, test counts, what the new
+    code does and why, any gotcha hit on the way, and what is next.
+  - **`README.md`** — the submission document. The API reference, the
+    architecture, the engineering answers, and the deliverables list.
+
+  A change that touches an endpoint, a status, a schema, an env var or a test
+  count has almost certainly invalidated a line in one of them. Check rather
+  than assume: an audit of these two files found a fabricated log example, two
+  libraries named in the stack but never installed, a directory that did not
+  exist, and an engineering answer describing a guard the code does not have.
+  Every one of those came from letting the docs lag a commit.
 
 ---
 
@@ -419,5 +432,7 @@ and understand why it failed — without reading a single API response.
 - [ ] Verify a clean clone runs with `docker compose up`
 - [ ] Note the Render cold-start delay next to the live demo link
 - [ ] Keep README's engineering answers in sync with what the code actually does
+      — this should already be true if [Conventions](#conventions) was followed;
+      treat a discrepancy found here as a sign the habit slipped
 - [ ] Re-read README end to end once the UI exists — the Frontend section
       currently describes what is being built, and must describe what shipped.
