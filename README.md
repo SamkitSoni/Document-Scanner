@@ -6,9 +6,8 @@ the extracted data and the full processing history through a web UI.
 
 Built for the SuretySeven SDE-1 take-home assignment.
 
-> **Status:** backend complete — upload, async processing, validation, retries,
-> crash recovery, and the full read API — with 59 tests. The web UI is in
-> progress.
+> **Status:** complete. Upload, async processing, validation, retries, crash
+> recovery, the full read API, and the web UI — with 60 backend tests.
 
 ---
 
@@ -55,9 +54,9 @@ exactly what happened to a document — including failed attempts and retries.
 | Duplicate detection | SHA-256 content hash, unique constraint, idempotent response |
 | History | Append-only `document_events` table |
 | Search and filtering | Status, type, date range, filename search, paginated |
-| UI | Next.js — dashboard, upload, list, detail with timeline *(in progress)* |
+| UI | Next.js — dashboard, upload, list, detail with timeline |
 | Observability | Structured JSON logs keyed by `documentId` and attempt |
-| Testing | 59 tests — unit for rules, integration through the real HTTP stack and database |
+| Testing | 60 tests — unit for rules, integration through the real HTTP stack and database |
 
 ---
 
@@ -72,8 +71,7 @@ exactly what happened to a document — including failed attempts and retries.
 | Queue | PostgreSQL (`FOR UPDATE SKIP LOCKED`) | Durable jobs without a second datastore; retry scheduling and backoff as explicit columns; see [the rationale](#why-a-postgres-backed-queue) |
 | Validation | Zod | One schema definition reused for request validation, extracted-data validation, and TypeScript types |
 | Logging | pino | Structured JSON, low overhead, child loggers for per-document context |
-| Frontend | Next.js 15 (App Router) | File-based routing, server components for initial loads, first-class Vercel deployment |
-
+| Frontend | Next.js 15 (App Router) | File-based routing, first-class Vercel deployment. Screens are client components: every view polls or filters live, which is client state either way |
 | UI | Tailwind CSS | Utility classes; no component library, so nothing to explain that I did not write |
 | Data fetching | `fetch` in client components | Polling while a document is in flight is a `setInterval` and a state update; a cache library would be more to justify than it saves at four screens |
 | Testing | Vitest + Supertest | Fast runner; integration tests drive the real HTTP stack and database |
@@ -82,12 +80,11 @@ exactly what happened to a document — including failed attempts and retries.
 Everything above is open source and free. See [Deployment](#deployment) for the
 hosting choices, which are also free-tier.
 
-The frontend rows describe the stack being built now; every backend row is in
-the code today.
-
 ---
 
 ## Architecture
+
+![Architecture diagram](docs/architecture.png)
 
 A modular monolith. One codebase, two entrypoints: an API process and a worker
 process. They share domain services, the Prisma client, and the queue definition.
@@ -604,16 +601,13 @@ request could read the entire table.
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /documents/:id/retry` | Manual retry of a terminally `FAILED` document; `409` otherwise. `VALIDATION_FAILED` is refused with an explanation — the processor already succeeded, so a retry reproduces the same rejection. Resets the attempt budget and writes a `MANUAL_RETRY` event. |
-| `GET /documents/:id/file` | Streams the stored PDF for in-browser preview |
+| `GET /documents/:id/file` | Streams the stored PDF for in-browser preview. Framing headers are narrowed to the configured frontend origin for this route only, so the detail view's cross-origin `<object>` embed is allowed without relaxing the rest of the API. |
 | `GET /documents/stats` | Dashboard counts by status |
 | `GET /health` | Liveness plus database reachability and current queue depth |
 
 ---
 
 ## Frontend
-
-> **In progress.** The backend is complete; this section describes the UI being
-> built against it.
 
 Next.js App Router. All filter state lives in URL query parameters, so any view
 is shareable and survives a refresh.
@@ -636,15 +630,42 @@ by attempt, so a retry story reads clearly:
 ✓  Processed           10:22:39
 ```
 
-**Polling:** TanStack Query with a `refetchInterval` that is active only while a
-document is in a non-terminal state and stops on completion. Server-sent events
-would be the production answer; polling is a deliberate simplification for this
-scope and is called out in [Limitations](#limitations).
+**Polling:** a `usePolledResource` hook refetches only while something on screen
+is still in flight, and stops scheduling once every row is terminal — so an idle
+tab is not hitting the API forever. No data-fetching library: at four screens,
+`fetch` plus one hook is less to justify than a cache layer would be. Server-sent
+events are the production answer; polling is a deliberate simplification called
+out in [Limitations](#limitations).
+
+**Errors never leak.** `ApiError` carries the envelope's stable `code` and a
+message the UI is willing to render; any 5xx is replaced with a generic string
+regardless of what the body said. This mirrors the backend's own single-handler
+approach, so requirement 9 is enforced structurally on both sides rather than by
+discipline at each call site.
 
 **Quality baseline:** loading skeletons rather than spinners where layout is
 known, empty states with a next action, toast notifications on transitions,
-labelled and keyboard-navigable form controls, `aria-live` announcements when a
-document's status changes, and a card layout below the `md` breakpoint.
+labelled and keyboard-navigable form controls, a focus-visible ring throughout, a
+skip-to-content link, `aria-live` announcements when a document's status changes,
+`prefers-reduced-motion` honoured, and a card layout below the `md` breakpoint.
+
+### Frontend layout
+
+```
+frontend/src/
+├── app/
+│   ├── layout.tsx              # nav, toast provider, skip link
+│   ├── page.tsx                # dashboard — tiles + recent activity
+│   ├── upload/page.tsx         # upload form, duplicate/success/error states
+│   ├── documents/page.tsx      # filterable, paginated list
+│   └── documents/[id]/page.tsx # detail — fields, errors, timeline, preview
+├── components/  Nav · Filters · Timeline · Toast · ui.tsx
+└── lib/         api.ts · display.ts · types.ts · usePolledResource.ts
+```
+
+`lib/display.ts` holds the single status→presentation mapping used by the table,
+the tiles and the timeline, so a status cannot be amber in one place and grey in
+another.
 
 ---
 
@@ -694,7 +715,7 @@ for `metadata` and `extractedData` paths as a second line of defence.
 
 ## Testing Strategy
 
-Run with `npm test`. **59 tests**, integration over unit wherever a route
+Run with `npm test`. **60 tests**, integration over unit wherever a route
 exists — a test that drives the real HTTP stack and the real database catches
 wiring bugs that a mocked unit test cannot.
 
@@ -724,17 +745,37 @@ string and repeats as an array; both must reach the query identically); a filter
 combined with a search; a pagination boundary walked across three pages
 asserting no row is dropped or repeated; `pageSize` above the cap rejected;
 `/documents/stats` routed as a literal rather than parsed as a document id;
-manual retry refused on a document that succeeded.
+manual retry refused on a document that succeeded; the file endpoint's framing
+headers, so the cross-origin PDF preview cannot silently regress.
 
 **Unit** — each validation rule including its boundary (`annualRevenue: 0`
 passes, `-1` fails; a date that matches the pattern but is not a real calendar
 date); the classifier's retry decisions; backoff growth and its jitter window.
 
-A bug this suite caught, as evidence it earns its keep: the claim query is raw
-SQL, so it returns snake_case columns rather than Prisma's camelCase mapping.
-`attemptCount` read as `undefined`, and since `undefined < 3` is false, every
+### The UI is verified, not unit-tested
+
+There are no frontend tests: the brief does not ask for them, and a Playwright
+setup would have cost hours the UI itself needed. Instead every screen was driven
+in a real headless browser against the running stack — asserting rendered text,
+console and network errors, click-through navigation, filter state reaching the
+URL, the upload and duplicate paths, and no horizontal overflow at 390px.
+
+That is what caught the bug below, and it is the honest trade: the backend has
+regression tests, the UI has verified behaviour at a point in time.
+
+Two bugs found this way, as evidence the effort earns its keep. The first, the
+suite caught; the second, only a browser could.
+
+**1. The claim query is raw SQL**, so it returns snake_case columns rather than
+Prisma's camelCase mapping. `attemptCount` read as `undefined`, and since `undefined < 3` is false, every
 document went terminal on its first attempt. Typecheck passed and the API
 returned `200`s — only an assertion on `attemptCount` after a retry exposed it.
+
+**2. The PDF preview was blocked by its own security headers.** Helmet sets
+`frame-ancestors 'self'`, so the detail view's cross-origin `<object>` embed was
+refused: the request returned `200` and the frame rendered empty. Invisible to
+the API tests and to `curl` — it took loading the page in a browser. The policy
+is now narrowed for that one route, and a test asserts it.
 
 ### Determinism
 
@@ -770,19 +811,25 @@ UID=$(id -u) GID=$(id -g) docker compose up --build
 | Health | http://localhost:4000/api/health |
 
 Compose starts four services: `postgres`, `api`, `worker`, and `web`. Migrations
-run automatically on API startup.
+run automatically on API startup, and the worker waits for the API's healthcheck
+before polling — without that gate it would race the migrations on a fresh
+database and exit before the schema exists.
 
 `UID`/`GID` are passed so the containers run as you rather than root — without
 them, the bind-mounted `uploads/` directory is created root-owned and every
 upload fails with `EACCES`.
 
-**While the UI is in progress**, the `web` service has nothing to build, so start
-the backend explicitly:
+To run only the backend (for example when working on the API):
 
 ```bash
-UID=$(id -u) GID=$(id -g) docker compose up -d postgres api worker
+docker compose up -d postgres api worker
 curl -s localhost:4000/api/health
 ```
+
+> **Note on `UID`/`GID`:** `UID` is a readonly variable in bash, so
+> `UID=$(id -u) docker compose …` fails there. The compose file defaults both to
+> `1000`, which matches the first user on most Linux systems. If your ids differ
+> (`id -u`), export them from a shell that allows it or set them in `.env`.
 
 After a schema change, add `-V --build`: `prisma generate` runs at image build
 time into a container-only `node_modules` volume, and Docker does not repopulate
@@ -834,6 +881,13 @@ curl -F file=@sample-invalid.pdf  -F documentType=FINANCIAL_STATEMENT http://loc
 
 ## Deployment
 
+> **Not yet deployed.** This section is the intended topology and the reasoning
+> behind it, not a description of a live environment. The application runs
+> locally via `docker compose up` (verified from a clean checkout with no
+> volumes). Everything below is chosen and costed; provisioning the three
+> accounts is the remaining step, and the live-demo link belongs here once it
+> exists.
+
 Free tier throughout, no credit card required for the database or frontend.
 
 | Component | Provider | Plan | Card required | Notes |
@@ -855,8 +909,9 @@ Render's free plan allows one always-listening web service, and background
 workers are a paid service type. A separately deployed worker on the free tier
 would sleep, leaving uploads stuck in `UPLOADED` indefinitely.
 
-The deployed build therefore sets **`RUN_WORKER_IN_PROCESS=true`**, which starts
-the polling loop inside the API process. Locally and under Docker Compose the two
+The deployed build would therefore set **`RUN_WORKER_IN_PROCESS=true`**, which
+starts the polling loop inside the API process — the flag exists and is
+implemented; it is simply not exercised by any running deployment yet. Locally and under Docker Compose the two
 run as separate processes, which is the architecturally correct shape and the one
 the code is written for — the flag only changes *where the loop is started*, not
 how it works. Because the queue lives in the database rather than in memory, the
@@ -875,8 +930,8 @@ worker deploys separately and scales independently of API traffic.
   built, since it is what local development and the demo need.
 - `WORKER_POLL_INTERVAL_MS` is raised in the deployed configuration, since Neon
   bills compute time and there is no benefit to polling an idle queue aggressively.
-- Cold starts mean the first request after idle takes about a minute. The
-  live-demo link notes this so a reviewer does not mistake it for a fault.
+- Cold starts mean the first request after idle takes about a minute; the
+  live-demo link should note this so a reviewer does not mistake it for a fault.
 
 ### A note on sleep and in-flight documents
 
@@ -1048,7 +1103,7 @@ pretending it is not.
 ```
 Document_processing_pipeline/
 ├── README.md                  # this file
-├── AI_USAGE.md                # AI tooling disclosure          (pending)
+├── AI_USAGE.md                # AI tooling disclosure
 ├── docker-compose.yml
 ├── .env.example
 ├── backend/
@@ -1061,10 +1116,12 @@ Document_processing_pipeline/
 │       ├── integration/       # health, upload, processing, read API
 │       ├── fixtures/
 │       └── helpers/
-├── frontend/                  # Next.js                        (in progress)
+├── frontend/                  # Next.js App Router
+│   └── src/
+│       ├── app/               # dashboard · upload · list · detail
+│       ├── components/        # nav, filters, timeline, toasts, primitives
+│       └── lib/               # api client, display mapping, polling hook
 └── docs/
-    └── architecture.png                                        (pending)
+    ├── architecture.png
+    └── architecture.svg       # source for the diagram above
 ```
-
-Items marked *pending* are the remaining work, tracked against §16 and the
-assignment's deliverables list.

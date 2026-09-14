@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="1010" viewBox="0 0 1180 1010" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#059669"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#dc2626"/>
+    </marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#d97706"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="1010" fill="#f8fafc"/>
+
+  <text x="40" y="46" font-size="21" font-weight="bold" fill="#0f172a">Document Processing Service — Architecture</text>
+  <text x="40" y="70" font-size="13" fill="#64748b">Modular monolith: one codebase, two entrypoints (API + worker) over one PostgreSQL database.</text>
+
+  <!-- Browser -->
+  <g>
+    <rect x="40" y="100" width="340" height="74" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="40" y="100" width="5" height="74" rx="2.5" fill="#2563eb"/>
+    <text x="58" y="127" font-size="14" font-weight="bold" fill="#0f172a">Browser</text>
+    <text x="58" y="146" font-size="11" fill="#64748b">Next.js 15 App Router (Vercel)</text>
+    <text x="58" y="162" font-size="11" fill="#64748b">Dashboard · Upload · List · Detail + Timeline</text>
+    <rect x="330" y="112" width="36" height="17" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="337" y="124" font-size="9.5" font-weight="bold" fill="#64748b">UI</text>
+  </g>
+
+  <line x1="210" y1="174" x2="210" y2="208" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="222" y="181" width="76" height="16" fill="#f8fafc"/>
+  <text x="226" y="193" font-size="11" fill="#64748b">REST / JSON</text>
+
+  <!-- API -->
+  <g>
+    <rect x="40" y="210" width="340" height="122" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="40" y="210" width="5" height="122" rx="2.5" fill="#2563eb"/>
+    <text x="58" y="237" font-size="14" font-weight="bold" fill="#0f172a">Express API  (Render)</text>
+    <text x="58" y="257" font-size="11" fill="#64748b">routes → controllers → services → repositories</text>
+    <text x="58" y="274" font-size="11" fill="#64748b">multipart upload, magic-byte PDF check</text>
+    <text x="58" y="291" font-size="11" fill="#64748b">SHA-256 content hash → duplicate detection</text>
+    <text x="58" y="308" font-size="11" fill="#64748b">filter / search / paginate · manual retry</text>
+    <text x="58" y="325" font-size="11" fill="#64748b">one terminal error handler → safe envelopes</text>
+    <rect x="326" y="222" width="40" height="17" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="333" y="234" font-size="9.5" font-weight="bold" fill="#64748b">API</text>
+  </g>
+
+  <line x1="210" y1="332" x2="210" y2="392" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="120" y="352" width="196" height="16" fill="#f8fafc"/>
+  <text x="124" y="364" font-size="11" fill="#64748b">INSERT document + event (one tx)</text>
+
+  <!-- Database -->
+  <g>
+    <rect x="40" y="394" width="340" height="150" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="40" y="394" width="5" height="150" rx="2.5" fill="#059669"/>
+    <text x="58" y="421" font-size="14" font-weight="bold" fill="#0f172a">PostgreSQL  (Neon)</text>
+    <text x="58" y="442" font-size="11" fill="#64748b">documents  ← also IS the queue:</text>
+    <text x="58" y="459" font-size="11" fill="#64748b">   status, attempt_count,</text>
+    <text x="58" y="476" font-size="11" fill="#64748b">   next_attempt_at, locked_at</text>
+    <text x="58" y="497" font-size="11" fill="#64748b">document_events ← append-only history</text>
+    <text x="58" y="524" font-size="11" fill="#64748b">unique(content_hash) enforces dedupe</text>
+    <rect x="320" y="406" width="46" height="17" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="327" y="418" font-size="9.5" font-weight="bold" fill="#64748b">DATA</text>
+  </g>
+
+  <!-- Worker -->
+  <g>
+    <rect x="450" y="210" width="350" height="200" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="450" y="210" width="5" height="200" rx="2.5" fill="#d97706"/>
+    <text x="468" y="237" font-size="14" font-weight="bold" fill="#0f172a">Worker Process  (Render)</text>
+    <text x="468" y="258" font-size="11" fill="#64748b">1. claim a due job atomically</text>
+    <text x="468" y="275" font-size="11" fill="#64748b">    UPDATE … FOR UPDATE SKIP LOCKED</text>
+    <text x="468" y="292" font-size="11" fill="#64748b">2. MockProcessor.extract(file)</text>
+    <text x="468" y="309" font-size="11" fill="#64748b">3. Validator.validate(extracted)</text>
+    <text x="468" y="326" font-size="11" fill="#64748b">4. persist terminal state + event (one tx)</text>
+    <text x="468" y="343" font-size="11" fill="#64748b">5. on failure: classify → retry or fail</text>
+    <text x="468" y="366" font-size="11" fill="#64748b">+ stale-job reaper reclaims expired leases</text>
+    <text x="468" y="390" font-size="11" fill="#64748b">+ SIGTERM drains in-flight work</text>
+    <rect x="726" y="222" width="62" height="17" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="733" y="234" font-size="9.5" font-weight="bold" fill="#64748b">WORKER</text>
+  </g>
+
+  <path d="M450 396 L416 396 Q400 396 400 416 L400 430 Q400 444 386 444 L382 444" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="392" y="418" width="78" height="16" fill="#f8fafc"/>
+  <text x="396" y="430" font-size="11" fill="#64748b">claim next due</text>
+
+  <path d="M384 500 Q384 470 404 470 L450 470 Q470 470 470 440 L470 412" fill="none" stroke="#059669" stroke-width="2" marker-end="url(#ag)"/>
+  <rect x="478" y="462" width="118" height="16" fill="#f8fafc"/>
+  <text x="482" y="474" font-size="11" fill="#059669">write state + event</text>
+
+  <!-- Storage -->
+  <g>
+    <rect x="450" y="440" width="350" height="72" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="450" y="440" width="5" height="72" rx="2.5" fill="#64748b"/>
+    <text x="468" y="467" font-size="14" font-weight="bold" fill="#0f172a">File Storage</text>
+    <text x="468" y="487" font-size="11" fill="#64748b">local disk behind a FileStorage interface</text>
+    <text x="468" y="504" font-size="11" fill="#64748b">S3 / R2 driver slots in — no caller change</text>
+    <rect x="732" y="452" width="56" height="17" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="739" y="464" font-size="9.5" font-weight="bold" fill="#64748b">FILES</text>
+  </g>
+  <path d="M640 410 L640 440" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>
+  <rect x="648" y="416" width="62" height="16" fill="#f8fafc"/>
+  <text x="652" y="428" font-size="11" fill="#64748b">read bytes</text>
+
+  <!-- Observability note -->
+  <g>
+    <rect x="830" y="210" width="310" height="122" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <rect x="830" y="210" width="5" height="122" rx="2.5" fill="#64748b"/>
+    <text x="848" y="237" font-size="14" font-weight="bold" fill="#0f172a">Observability</text>
+    <text x="848" y="258" font-size="11" fill="#64748b">structured pino JSON, child logger per</text>
+    <text x="848" y="275" font-size="11" fill="#64748b">document: documentId + attempt on every line</text>
+    <text x="848" y="296" font-size="11" fill="#64748b">field names and rule ids only —</text>
+    <text x="848" y="313" font-size="11" fill="#64748b">never extracted values (pino redaction)</text>
+  </g>
+
+  <!-- Lifecycle -->
+  <text x="40" y="596" font-size="14" font-weight="bold" fill="#0f172a">Processing lifecycle</text>
+
+  <rect x="40" y="612" width="130" height="36" rx="8" fill="#fff" stroke="#64748b" stroke-width="2"/>
+  <text x="105" y="635" font-size="11" fill="#64748b" text-anchor="middle">UPLOADED</text>
+  <line x1="174" y1="630" x2="200" y2="630" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>
+
+  <rect x="204" y="612" width="130" height="36" rx="8" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+  <text x="269" y="635" font-size="11" fill="#2563eb" text-anchor="middle">PROCESSING</text>
+  <line x1="338" y1="630" x2="364" y2="630" stroke="#64748b" stroke-width="2" marker-end="url(#a)"/>
+
+  <rect x="368" y="612" width="130" height="36" rx="8" fill="#fff" stroke="#059669" stroke-width="2"/>
+  <text x="433" y="635" font-size="11" fill="#059669" text-anchor="middle">PROCESSED</text>
+
+  <rect x="40" y="684" width="150" height="36" rx="8" fill="#fff" stroke="#d97706" stroke-width="2"/>
+  <text x="115" y="707" font-size="11" fill="#d97706" text-anchor="middle">RETRY_PENDING</text>
+
+  <rect x="204" y="684" width="170" height="36" rx="8" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+  <text x="289" y="707" font-size="11" fill="#dc2626" text-anchor="middle">VALIDATION_FAILED</text>
+
+  <rect x="410" y="684" width="120" height="36" rx="8" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+  <text x="470" y="707" font-size="11" fill="#dc2626" text-anchor="middle">FAILED</text>
+
+  <path d="M240 650 L160 682" stroke="#d97706" stroke-width="2" marker-end="url(#aa)"/>
+  <text x="150" y="676" font-size="10" fill="#d97706">retryable</text>
+  <path d="M104 682 L104 656 Q104 648 118 648 L200 630" stroke="#d97706" stroke-width="2" stroke-dasharray="6 4" fill="none" marker-end="url(#aa)"/>
+  <text x="34" y="676" font-size="10" fill="#d97706">re-queued</text>
+  <path d="M269 650 L280 682" stroke="#dc2626" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="292" y="672" font-size="10" fill="#dc2626">invalid data</text>
+  <path d="M320 650 Q420 660 470 682" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+  <rect x="372" y="652" width="112" height="15" fill="#f8fafc"/>
+  <text x="376" y="664" font-size="10" fill="#dc2626">attempts exhausted</text>
+
+  <text x="560" y="692" font-size="11" fill="#64748b">Retry: 3 attempts, 2s / 4s / 8s backoff ± 25% jitter.</text>
+  <text x="560" y="710" font-size="11" fill="#64748b">TIMEOUT and ERROR are retried; INVALID_RESULT is not.</text>
+  <text x="560" y="728" font-size="11" fill="#64748b">A terminally FAILED document can be retried manually from the UI.</text>
+
+  <line x1="40" y1="768" x2="1140" y2="768" stroke="#cbd5e1"/>
+
+  <text x="40" y="794" font-size="13" font-weight="bold" fill="#0f172a">Why PostgreSQL is the queue</text>
+  <text x="40" y="812" font-size="11" fill="#64748b">Claiming a job and updating document state are the same transaction, so the two cannot disagree after a crash.</text>
+
+  <text x="40" y="842" font-size="13" font-weight="bold" fill="#0f172a">Crash recovery</text>
+  <text x="40" y="860" font-size="11" fill="#64748b">PROCESSING is a lease, not a lock. A reaper reclaims any row whose locked_at has aged past the lease window.</text>
+
+  <text x="40" y="890" font-size="13" font-weight="bold" fill="#0f172a">Duplicate detection</text>
+  <text x="40" y="908" font-size="11" fill="#64748b">SHA-256 of the bytes, with a unique constraint as the authority; a re-upload returns the original document as 200.</text>
+
+  <text x="40" y="938" font-size="13" font-weight="bold" fill="#0f172a">Five states, not four</text>
+  <text x="40" y="956" font-size="11" fill="#64748b">VALIDATION_FAILED separates "the processor broke" (retryable) from "the content is bad" (retrying cannot help).</text>
+
+  <text x="40" y="986" font-size="10" fill="#94a3b8">Horizontal scaling: more worker instances run the same claim statement safely — SKIP LOCKED guarantees no two claim the same row.</text>
+</svg>

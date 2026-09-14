@@ -7,7 +7,7 @@ pipeline with asynchronous extraction, validation, and retries.
 engineering answers. **This file is the build log**: what exists, what is next,
 and the decisions worth not re-deriving.
 
-**Last updated:** end of phase 4 (read APIs). Backend complete.
+**Last updated:** end of phase 6 (frontend). Backend and UI complete.
 
 ---
 
@@ -20,23 +20,27 @@ and the decisions worth not re-deriving.
 | 3. Async processing + retries | **Done** | full lifecycle + crash recovery confirmed via Docker |
 | 4. Validation + read APIs | **Done** | 10 tests; all endpoints verified live |
 | 5. Testing | **Done enough** | all 6 required scenarios covered; see [Test inventory](#test-inventory) |
-| 6. Frontend | Not started | — |
-| 7. Deployment + docs | Not started | — |
+| 6. Frontend | **Done** | 4 screens; verified in a real browser against the running stack |
+| 7. Deployment + docs | **Docs done** | `AI_USAGE.md`, `docs/architecture.png`; deployment not performed |
 
-**59 tests passing, typecheck clean.**
+**60 tests passing, both typechecks clean.**
 
 ### Verification commands
 
 ```bash
 cd backend
-npm test            # 59 passing
+npm test            # 60 passing
 npx tsc --noEmit    # clean
-npm run dev         # API on :4000
 
-# Full stack (web service fails until phase 6 — start services explicitly)
-UID=$(id -u) GID=$(id -g) docker compose up -d postgres api worker
+cd ../frontend
+npx tsc --noEmit    # clean
+npm run build       # catches what tsc alone does not
+
+# Full stack — all four services now build
+docker compose up -d
 # After any schema change, add -V --build (see Gotchas)
-curl -s localhost:4000/api/health
+curl -s localhost:4000/api/health   # API
+curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/   # UI
 
 # Demonstrate a path on command: filename hints beat the hash-seeded draw.
 curl -X POST localhost:4000/api/documents \
@@ -141,7 +145,7 @@ The surface the UI is built against. Every endpoint maps to a screen in §8.
 
 ## Test inventory
 
-59 tests, 6 files. Integration over unit wherever a route exists.
+60 tests, 6 files. Integration over unit wherever a route exists.
 
 | File | Tests | Covers |
 | --- | --- | --- |
@@ -150,7 +154,7 @@ The surface the UI is built against. Every endpoint maps to a screen in §8.
 | `tests/integration/processing.test.ts` | 15 | lifecycle, retries, claiming, crash recovery |
 | `tests/unit/validator.test.ts` | 9 | each rule + boundaries (`0` passes, `-1` fails) |
 | `tests/unit/processing.test.ts` | 8 | classifier, backoff, filename hints |
-| `tests/integration/read-api.test.ts` | 10 | filters, pagination boundary, stats routing, retry guards |
+| `tests/integration/read-api.test.ts` | 11 | filters, pagination boundary, stats routing, retry guards, preview framing headers |
 
 ### The brief's six required scenarios
 
@@ -164,8 +168,8 @@ The surface the UI is built against. Every endpoint maps to a screen in §8.
 | 6 | Same document twice | `upload.test.ts` → "duplicate detection" | Done |
 
 All six are covered, and README's Testing Strategy maps this table to the files
-so a reviewer can find them. **No further test work is planned** — see
-[Scope discipline](#scope-discipline).
+so a reviewer can find them. The 60th test was added with the CSP fix, per the
+convention that a fix ships with the test that would have caught it.
 
 ### How the tests avoid flakiness
 
@@ -183,7 +187,11 @@ so a reviewer can find them. **No further test work is planned** — see
 ## Stack
 
 TypeScript · Express 5 · PostgreSQL 16 + Prisma 6 · Zod · pino · Vitest +
-Supertest · Next.js 15 (phase 6) · Docker Compose.
+Supertest · Next.js 15 + React 19 + Tailwind 3 · Docker Compose.
+
+Frontend deps are deliberately minimal: no data-fetching, state or component
+library. Everything in the stack is actually installed — checked, after npm
+quietly resolved a TypeScript major I did not ask for.
 
 **No Redis, no BullMQ** — the queue is Postgres. See [Key decisions](#key-decisions).
 
@@ -205,6 +213,13 @@ backend/src/
 ├── storage/      file-storage.ts      # disk driver behind an interface
 ├── middleware/   upload · validate · request-context · error-handler · not-found
 └── common/       errors.ts · types.ts · async-handler.ts
+```
+
+```
+frontend/src/
+├── app/          layout · page (dashboard) · upload · documents · documents/[id]
+├── components/   Nav · Filters · Timeline · Toast · ui.tsx (badge, card, states)
+└── lib/          api.ts · display.ts · types.ts · usePolledResource.ts
 ```
 
 Layering is one-directional: **routes → controllers → services → repositories**.
@@ -257,7 +272,7 @@ Decided deliberately, not by default: **the backend is tested, the UI is not.**
   a browser, where page 2 looks fine even when it silently skips a row.
 - **UI: no automated tests.** Manual verification. The brief does not ask for
   frontend tests and a Playwright setup would cost hours the UI itself needs.
-- **Then stop.** 59 tests is the submission number unless something breaks.
+- **Then stop.** 60 tests is the submission number unless something breaks.
 
 The reason they are written alongside rather than at the end: deferred tests
 land in the final hours competing with deployment, `AI_USAGE.md` and the
@@ -360,8 +375,6 @@ Do not rediscover these.
   repository boundary.
 - **`rootDir` vs tests.** Base tsconfig has no `rootDir`; only
   `tsconfig.build.json` sets it, or including `tests/**` fails to compile.
-- **`docker compose up` with no arguments fails** until phase 6 — the `web`
-  service points at an empty `frontend/`.
 - **A schema change needs `docker compose up -d -V --build`.** `prisma generate`
   runs at *image build* time into the container-only `node_modules` volume, and
   Docker populates an anonymous volume only when it first creates it — so a
@@ -370,6 +383,46 @@ Do not rediscover these.
   anonymous volumes. Do *not* "fix" this by running `prisma generate` in the
   container's start command: the volume is root-owned from the image build, and
   a container running as the host user gets `EACCES` trying to rewrite it.
+- **The worker raced the API's migrations and died on boot.** `depends_on:
+  api: condition: service_started` only means "container created", so on a
+  *fresh* volume the worker started before `prisma migrate deploy` finished and
+  crashed with `42P01 relation "documents" does not exist`. Uploads still
+  returned `201`; nothing ever processed. Invisible on a warm database — only a
+  `docker compose down -v` then `up` reproduces it, which is exactly why that
+  check is on the list. Fixed with a healthcheck on `api` (its `/api/health`
+  returns 200 only once the database is reachable, i.e. after migrations) and
+  `condition: service_healthy` on the worker, plus `restart: unless-stopped`
+  so a dead worker comes back instead of sitting there looking "Up".
+- **A root-owned `.next` on the host blocks a local `npm run build`.** If the
+  web container ever runs without the `/app/.next` anonymous volume (or before
+  the Dockerfile's `chown`), it writes a root-owned `.next` into `./frontend`
+  through the bind mount, and a later host-side build dies with
+  `EACCES … .next/trace`. Clear it with a container rather than sudo:
+  `docker run --rm -v "$PWD/frontend:/w" alpine rm -rf /w/.next`. It is
+  gitignored, so a fresh clone never sees this.
+- **`tsx watch` keeps the container "Up" after the process dies.**
+  `docker compose ps` said `Up 2 minutes` while the worker was crashed and the
+  queue was unattended. Do not trust container status as a liveness signal here;
+  check the logs or the queue depth.
+- **Helmet's CSP blocks the cross-origin PDF preview.** `frame-ancestors 'self'`
+  plus `X-Frame-Options: SAMEORIGIN` refuse the detail view's `<object>` embed —
+  and the failure is silent: `200`, correct bytes, empty frame. Not visible in
+  the API tests or in `curl`; it took a browser. Fixed by narrowing both headers
+  on `GET /:id/file` only (`X-Frame-Options` is removed rather than rewritten —
+  it has no multi-origin form and `frame-ancestors` supersedes it). A test now
+  asserts it.
+- **`.next` hits the same root-owned-volume trap as `uploads/`.** The anonymous
+  volume is created root-owned at image build, but the container runs as the
+  host user → `EACCES: mkdir '/app/.next/cache'` and the dev server dies on
+  boot. Fixed the same way: `mkdir -p /app/.next && chown -R node:node` in the
+  Dockerfile. Needs `-V` to renew the stale volume, exactly like the Prisma case.
+- **`UID` is readonly in bash.** `UID=$(id -u) docker compose up` fails with
+  "readonly variable" — the documented incantation does not work in bash. The
+  compose file defaults to `1000:1000`, which is right on most single-user Linux
+  boxes; `id -u` to check.
+- **npm resolved `typescript@^7` from a bare `npm i -D typescript`.** Pinned to
+  5.7.2 to match the backend. Worth checking resolved versions after any install
+  rather than assuming the major.
 - **`$queryRaw` returns raw snake_case columns, not Prisma's camelCase.** The
   claim statement must be raw (`FOR UPDATE SKIP LOCKED` has no query-builder
   form), so its result is *not* a `Document`: `attempt_count` arrives, and
@@ -380,59 +433,78 @@ Do not rediscover these.
 
 ---
 
-## Next: phase 6 — the frontend
+## Phase 6 — the frontend (done)
 
-**The backend is done. Nothing more goes into it** — see
-[Scope discipline](#scope-discipline). Remaining time belongs to the UI, which
-§8 makes a requirement and §10 rewards.
+Next.js 15 App Router in `frontend/`, four screens, each backed by an endpoint
+that already existed.
 
-Next.js 15 App Router, `frontend/`. Four screens, each backed by an endpoint
-that already exists and is verified:
-
-| Route | Endpoint | Contents |
+| Route | Endpoint | What it does |
 | --- | --- | --- |
-| `/` | `GET /documents/stats` | Dashboard tiles: total, in progress, processed, failed |
-| `/upload` | `POST /documents` | File picker, type selector, optional metadata; explicit success / failure / **duplicate** states |
-| `/documents` | `GET /documents` | Table with status + type filters, search, pagination |
-| `/documents/[id]` | detail + `/history` + `/file` | Info, extracted fields, validation errors, timeline, PDF preview, manual retry |
+| `/` | `GET /documents/stats` + list | Tiles (total, in progress, processed, needs attention) + recent activity. Tiles link into pre-filtered list views. |
+| `/upload` | `POST /documents` | Drag-drop or browse, type selector, metadata rows; distinct success / duplicate / error states. |
+| `/documents` | `GET /documents` | Table (cards below `md`), status + type chips, search, date range, sort, pagination. |
+| `/documents/[id]` | detail + `/history` + `/file` | Info, extracted fields, validation errors, timeline, PDF preview, manual retry with confirmation. |
 
-Notes worth having before starting:
+### Decisions worth not re-deriving
 
-- **Filter state belongs in the URL** (`?status=FAILED&page=2`), so a view is
-  shareable and survives a refresh. The API takes repeatable params, which maps
-  onto `URLSearchParams` directly.
-- **Poll while anything is non-terminal.** A document in `UPLOADED`,
-  `RETRY_PENDING` or `PROCESSING` will change without user action; stop polling
-  once every row is terminal so an idle tab is not hitting the API forever.
-- **The timeline is the showpiece.** `GET /:id/history` already returns
-  attempt-numbered events including `MANUAL_RETRY`, which renders as the
-  §8C "✓ Uploaded → ✕ Failed → ✓ Retried → ✓ Processed" story directly.
-- **`rejectedData` exists for the detail view** — show the extraction that
-  failed beside the errors that rejected it.
-- **Never render `error.message` from a 500.** The envelope's `code` is what the
-  UI branches on; §9 forbids exposing raw backend errors.
-- **No frontend tests** — decided in [Testing from here](#testing-from-here).
+- **URL is the filter state.** `?status=FAILED&status=PROCESSED&page=2` — the API
+  takes repeatable params, so `URLSearchParams` maps onto it directly. Shareable,
+  survives refresh, and back/forward behaves like using the controls.
+- **Polling stops.** `usePolledResource` takes `intervalMs(data)`; returning
+  `null` schedules nothing further. Every screen stops once its rows are terminal,
+  so an idle tab is not hitting the API forever.
+- **No data-fetching library.** Four screens and one polling rule did not justify
+  TanStack Query. (The README previously claimed TanStack — it was never
+  installed; that line is now corrected.)
+- **`lib/display.ts` owns status presentation.** One mapping for the table, the
+  tiles and the timeline. Colour is never the only signal: every badge carries a
+  label, and timeline markers carry a glyph.
+- **`ApiError` is the only thing rendered.** It holds the envelope's stable
+  `code` plus a message we are willing to show; any 5xx becomes a generic string
+  regardless of the body. §9 enforced structurally, mirroring the backend.
+- **Client components throughout.** Every screen polls or filters, which is
+  client state either way; server components would have bought nothing here.
 
-**Done when:** a user can upload a document, watch it process, filter for it,
-and understand why it failed — without reading a single API response.
+### The one backend change this phase
 
-### Then
-
-- **Phase 7:** Neon + Render + Vercel (all free, no card); `docs/architecture.png`;
-  `AI_USAGE.md`.
+Everything else was additive, but the PDF preview forced a real fix:
+`GET /:id/file` now narrows `frame-ancestors` to `CORS_ORIGIN` and drops
+`X-Frame-Options` **for that route only**. See Gotchas — it is the kind of bug
+that returns `200` and renders nothing.
 
 ---
 
+## How the UI was verified
+
+No frontend tests (decided in [Testing from here](#testing-from-here)). Instead,
+every screen was driven in headless Chromium against the running stack:
+
+- rendered text on all four screens, plus console / pageerror / requestfailed
+- click-through from list row to detail, asserting the timeline rendered
+- toggling a filter chip → URL gained `?status=PROCESSED`, count 16 → 5
+- upload and re-upload of the same bytes → "Upload accepted" then "Already
+  uploaded", both pointing at the same document id
+- `scrollWidth === clientWidth` at 390px on every screen (no mobile overflow)
+- the whole set re-run against `docker compose` rather than a local dev server
+
+Final run: **0 problems across 6 pages.** Worth re-running after any UI change —
+the script pattern is in the session notes, not committed.
+
 ## Before submitting
 
-- [ ] `AI_USAGE.md` — tools used, what was generated, what was **changed or
-      rejected** (the Prisma 7 rejection and the BullMQ rejection are good
-      material: both were AI suggestions overturned by checking real constraints)
-- [ ] `docs/architecture.png`
-- [ ] Verify a clean clone runs with `docker compose up`
-- [ ] Note the Render cold-start delay next to the live demo link
-- [ ] Keep README's engineering answers in sync with what the code actually does
-      — this should already be true if [Conventions](#conventions) was followed;
-      treat a discrepancy found here as a sign the habit slipped
-- [ ] Re-read README end to end once the UI exists — the Frontend section
-      currently describes what is being built, and must describe what shipped.
+- [x] `AI_USAGE.md` — tools, what was generated, what was **changed or rejected**
+      (Prisma 7 and BullMQ, both AI suggestions overturned by checking real
+      constraints; plus the two bugs only execution caught)
+- [x] `docs/architecture.png` — generated from `docs/architecture.svg`, so it can
+      be regenerated when the architecture changes rather than redrawn
+- [x] README describes what shipped, not what was planned
+- [x] **A clean `docker compose up` works** — verified from `down -v`: all four
+      services start, migrations run, and one document per path reaches
+      `PROCESSED` / `VALIDATION_FAILED` / `FAILED`. This check found the worker
+      migration race (see Gotchas); re-run it after touching compose.
+- [ ] **Deploy** (Neon + Render + Vercel), then add the live link and the
+      cold-start note. The README's Deployment section is now explicitly marked
+      as the *intended* topology rather than a live environment — accurate as it
+      stands, but the section must be updated again once something is actually
+      running.
+- [ ] Re-run the browser verification after any further UI change.
