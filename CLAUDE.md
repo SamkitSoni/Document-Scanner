@@ -7,7 +7,7 @@ pipeline with asynchronous extraction, validation, and retries.
 engineering answers. **This file is the build log**: what exists, what is next,
 and the decisions worth not re-deriving.
 
-**Last updated:** after the phase-3 scope trim (see [Scope discipline](#scope-discipline)).
+**Last updated:** end of phase 4 (read APIs). Backend complete.
 
 ---
 
@@ -18,18 +18,18 @@ and the decisions worth not re-deriving.
 | 1. Foundation | **Done** | 3 tests; `docker compose up` healthy |
 | 2. Upload + persistence | **Done** | 14 tests; upload + dedupe confirmed via Docker |
 | 3. Async processing + retries | **Done** | full lifecycle + crash recovery confirmed via Docker |
-| 4. Validation + read APIs | Partial — validation done; read APIs pending | — |
+| 4. Validation + read APIs | **Done** | 10 tests; all endpoints verified live |
 | 5. Testing | **Done enough** | all 6 required scenarios covered; see [Test inventory](#test-inventory) |
 | 6. Frontend | Not started | — |
 | 7. Deployment + docs | Not started | — |
 
-**49 tests passing, typecheck clean.**
+**59 tests passing, typecheck clean.**
 
 ### Verification commands
 
 ```bash
 cd backend
-npm test            # 49 passing
+npm test            # 59 passing
 npx tsc --noEmit    # clean
 npm run dev         # API on :4000
 
@@ -106,11 +106,29 @@ on without re-reading the source.
 - **Processing logs** answer "why did DOC-X fail?" — attempt, reason, backoff,
   terminal state, with no document contents.
 
+### Phase 4 — read APIs
+
+The surface the UI is built against. Every endpoint maps to a screen in §8.
+
+- **`GET /documents`** — repeatable `status`/`documentType`, `search`, `from`/`to`,
+  `page`/`pageSize` (default 20, **cap 100**), `sort`. Returns
+  `{ data, pagination }` with a summary shape, not the full detail row.
+- **`GET /documents/stats`** — dashboard counts. Absent statuses are filled in
+  as zero so the UI renders a stable set of tiles.
+- **`GET /documents/:id/history`** — the §7 shape. `404` for an unknown
+  document rather than an empty array, which would be ambiguous.
+- **`GET /documents/:id/file`** — the stored PDF, `Content-Disposition: inline`
+  for preview rather than download.
+- **`POST /documents/:id/retry`** — manual retry, `409` for anything not
+  terminally `FAILED`. `VALIDATION_FAILED` is refused with an explanation, not
+  just a status code: retrying it would deterministically reproduce the
+  rejection. Writes a `MANUAL_RETRY` event and resets the attempt budget.
+
 ---
 
 ## Test inventory
 
-49 tests, 5 files. Integration over unit wherever a route exists.
+59 tests, 6 files. Integration over unit wherever a route exists.
 
 | File | Tests | Covers |
 | --- | --- | --- |
@@ -119,6 +137,7 @@ on without re-reading the source.
 | `tests/integration/processing.test.ts` | 15 | lifecycle, retries, claiming, crash recovery |
 | `tests/unit/validator.test.ts` | 9 | each rule + boundaries (`0` passes, `-1` fails) |
 | `tests/unit/processing.test.ts` | 8 | classifier, backoff, filename hints |
+| `tests/integration/read-api.test.ts` | 10 | filters, pagination boundary, stats routing, retry guards |
 
 ### The brief's six required scenarios
 
@@ -165,7 +184,7 @@ backend/src/
 ├── worker.ts                    # poll loop (concurrency slots) + reaper + drain-on-SIGTERM
 ├── app.ts                       # buildApp() — no listen(), so Supertest can drive it
 ├── config/       env.ts · logger.ts · db.ts · queue.ts   # queue.ts = the Postgres JobQueue
-├── routes/       index.ts · health.routes.ts · documents.routes.ts
+├── routes/       index.ts · health.routes.ts · documents.routes.ts  # /stats before /:id
 ├── controllers/  documents.controller.ts
 ├── services/     documents.service.ts · processing.service.ts  # the state machine
 ├── processing/   mock-processor.ts · validator.ts · error-classifier.ts
@@ -209,6 +228,25 @@ spending remaining time deepening it instead of building the UI.
 - **Jitter** — one line, and it is the answer to the 1M-documents/day question.
 - **Five states** — §4 requires that invalid data not be "marked as
   successfully processed".
+
+### Testing from here
+
+Decided deliberately, not by default: **the backend is tested, the UI is not.**
+
+- **Phase 4:** ~6 tests, written *with* the endpoints — one per endpoint, plus a
+  filter-combination and a pagination-boundary case. Query parsing is where the
+  bugs hide (`req.query` is a getter in Express 5; repeatable params; the
+  `pageSize` cap), and those are invisible in a browser — page 2 looks fine even
+  when it silently skips a row.
+- **UI:** no automated tests. Manual verification. The brief does not ask for
+  frontend tests and a Playwright setup would cost hours that the UI itself
+  needs.
+- **Then stop.** ~55 tests at submission.
+
+The reason they are written alongside rather than at the end: deferred tests
+land in the final hours competing with deployment, `AI_USAGE.md` and the
+architecture diagram, and §13 makes them a graded requirement. The risk is not
+that late tests are worse — it is that they do not get written.
 
 ### The rule from here
 
@@ -313,39 +351,44 @@ Do not rediscover these.
 
 ---
 
-## Next: phase 4 — read APIs
+## Next: phase 6 — the frontend
 
-Validation landed with phase 3 (`processing/validator.ts` → `VALIDATION_FAILED`),
-so what remains is the read surface. **Scope it to what the UI actually renders**
-— every endpoint here maps to a screen in §8, and nothing else gets added:
+**The backend is done. Nothing more goes into it** — see
+[Scope discipline](#scope-discipline). Remaining time belongs to the UI, which
+§8 makes a requirement and §10 rewards.
 
-1. **`GET /documents`** — list with `status` / `documentType` (both repeatable),
-   `search`, `from`/`to`, `page`/`pageSize` (default 20, cap 100), `sort`.
-   `documents.repo.list()` already implements the query; it needs a controller,
-   a Zod query schema and the `{ data, pagination }` envelope.
-2. **`GET /documents/:id/history`** — `events.repo.listForDocument()` exists;
-   map it to `{ status, timestamp, attempt, reason }`.
-3. **`GET /documents/stats`** — `countByStatus()` exists; the dashboard needs it.
-4. **`GET /documents/:id/file`** — stream the PDF for the preview.
-5. **`POST /documents/:id/retry`** — manual retry. `resetForManualRetry()` is
-   written; it needs the `409` guard for a document that is not terminally
-   `FAILED`.
+Next.js 15 App Router, `frontend/`. Four screens, each backed by an endpoint
+that already exists and is verified:
 
-Note the route-order trap: `/documents/stats` must be registered **before**
-`/documents/:id`, or `stats` is parsed as an id and rejected by the id regex.
+| Route | Endpoint | Contents |
+| --- | --- | --- |
+| `/` | `GET /documents/stats` | Dashboard tiles: total, in progress, processed, failed |
+| `/upload` | `POST /documents` | File picker, type selector, optional metadata; explicit success / failure / **duplicate** states |
+| `/documents` | `GET /documents` | Table with status + type filters, search, pagination |
+| `/documents/[id]` | detail + `/history` + `/file` | Info, extracted fields, validation errors, timeline, PDF preview, manual retry |
 
-**Done when:** the UI could be built against the API without further backend
-work. That is also the moment backend work *stops* — see
-[Scope discipline](#scope-discipline).
+Notes worth having before starting:
+
+- **Filter state belongs in the URL** (`?status=FAILED&page=2`), so a view is
+  shareable and survives a refresh. The API takes repeatable params, which maps
+  onto `URLSearchParams` directly.
+- **Poll while anything is non-terminal.** A document in `UPLOADED`,
+  `RETRY_PENDING` or `PROCESSING` will change without user action; stop polling
+  once every row is terminal so an idle tab is not hitting the API forever.
+- **The timeline is the showpiece.** `GET /:id/history` already returns
+  attempt-numbered events including `MANUAL_RETRY`, which renders as the
+  §8C "✓ Uploaded → ✕ Failed → ✓ Retried → ✓ Processed" story directly.
+- **`rejectedData` exists for the detail view** — show the extraction that
+  failed beside the errors that rejected it.
+- **Never render `error.message` from a 500.** The envelope's `code` is what the
+  UI branches on; §9 forbids exposing raw backend errors.
+- **No frontend tests** — decided in [Testing from here](#testing-from-here).
+
+**Done when:** a user can upload a document, watch it process, filter for it,
+and understand why it failed — without reading a single API response.
 
 ### Then
 
-- **Phase 5:** effectively done. All six required scenarios pass and README maps
-  them to their files. Add tests for list filtering/pagination when phase 4
-  lands — a handful, not a suite — and nothing more.
-- **Phase 6:** Next.js — dashboard, upload, list, detail with timeline. Only
-  after the backend is done: the brief says twice that a polished UI over a weak
-  backend scores lower.
 - **Phase 7:** Neon + Render + Vercel (all free, no card); `docs/architecture.png`;
   `AI_USAGE.md`.
 

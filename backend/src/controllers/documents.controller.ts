@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { NotFoundError, ValidationError } from '../common/errors.js';
+import { DOCUMENT_STATUSES } from '../common/types.js';
+import { validatedQuery } from '../middleware/validate.js';
 import * as documentsService from '../services/documents.service.js';
 
 const documentTypeSchema = z.enum([
@@ -91,4 +93,122 @@ function toDetailResponse(d: DocumentRow) {
     failureReason: d.failureReason ?? null,
     validationErrors: d.validationErrors ?? null,
   };
+}
+
+/**
+ * Query schema for the document list.
+ *
+ * `status` and `documentType` are repeatable: Express gives a single value as a
+ * string and repeats as an array, so both are normalised to an array here and
+ * controllers never have to care which arrived.
+ */
+const repeatable = <T extends z.ZodTypeAny>(schema: T) =>
+  z.union([schema, z.array(schema)]).optional().transform((v) => {
+    if (v === undefined) return undefined;
+    return (Array.isArray(v) ? v : [v]) as z.infer<T>[];
+  });
+
+const statusSchema = z.enum(DOCUMENT_STATUSES);
+
+/** `field:direction`, defaulting to newest first — what the list view wants. */
+const sortSchema = z
+  .enum(['createdAt:desc', 'createdAt:asc', 'filename:asc', 'filename:desc'])
+  .default('createdAt:desc')
+  .transform((value) => {
+    const [field, direction] = value.split(':') as ['createdAt' | 'filename', 'asc' | 'desc'];
+    return { sortField: field, sortDirection: direction };
+  });
+
+export const listQuerySchema = z
+  .object({
+    status: repeatable(statusSchema),
+    documentType: repeatable(documentTypeSchema),
+    search: z.string().trim().min(1).max(200).optional(),
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+    page: z.coerce.number().int().positive().default(1),
+    // Capped: an uncapped page size lets one request read the whole table.
+    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    sort: sortSchema,
+  })
+  .refine((q) => !q.from || !q.to || q.from <= q.to, {
+    message: 'The "from" date must not be after the "to" date.',
+    path: ['from'],
+  });
+
+type ListQuery = z.infer<typeof listQuerySchema>;
+
+export async function list(_req: Request, res: Response): Promise<void> {
+  const q = validatedQuery<ListQuery>(res);
+
+  const { items, pagination } = await documentsService.listDocuments({
+    status: q.status,
+    documentType: q.documentType,
+    search: q.search,
+    from: q.from,
+    to: q.to,
+    page: q.page,
+    pageSize: q.pageSize,
+    sortField: q.sort.sortField,
+    sortDirection: q.sort.sortDirection,
+  });
+
+  res.json({ data: items.map(toSummaryResponse), pagination });
+}
+
+/** The list view needs far less than the detail view; sending less keeps it quick. */
+function toSummaryResponse(d: DocumentRow) {
+  return {
+    documentId: d.id,
+    filename: d.filename,
+    documentType: d.documentType,
+    status: d.status,
+    sizeBytes: d.sizeBytes,
+    attemptCount: d.attemptCount,
+    failureReason: d.failureReason ?? null,
+    createdAt: d.createdAt.toISOString(),
+    updatedAt: d.updatedAt.toISOString(),
+  };
+}
+
+export async function getHistory(req: Request, res: Response): Promise<void> {
+  const events = await documentsService.getHistory(req.params.id as string);
+
+  res.json(
+    events.map((e) => ({
+      status: e.status,
+      timestamp: e.createdAt.toISOString(),
+      attempt: e.attempt,
+      reason: e.reason,
+      detail: e.detail,
+    })),
+  );
+}
+
+export async function getStats(_req: Request, res: Response): Promise<void> {
+  res.json(await documentsService.getStats());
+}
+
+export async function getFile(req: Request, res: Response): Promise<void> {
+  const { document, data } = await documentsService.getDocumentFile(req.params.id as string);
+
+  res.setHeader('Content-Type', document.mimeType);
+  res.setHeader('Content-Length', data.length);
+  // inline, not attachment: the detail view previews the PDF rather than
+  // downloading it. The filename is quoted and stripped of quotes of its own.
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${document.filename.replace(/["\\]/g, '')}"`,
+  );
+  res.send(data);
+}
+
+export async function retry(req: Request, res: Response): Promise<void> {
+  const document = await documentsService.retryDocument(req.params.id as string);
+
+  res.json({
+    documentId: document.id,
+    status: document.status,
+    attemptCount: document.attemptCount,
+  });
 }

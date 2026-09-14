@@ -6,8 +6,9 @@ the extracted data and the full processing history through a web UI.
 
 Built for the SuretySeven SDE-1 take-home assignment.
 
-> **Status:** backend complete (upload, async processing, validation, retries,
-> crash recovery) with 49 tests. The web UI is in progress.
+> **Status:** backend complete — upload, async processing, validation, retries,
+> crash recovery, and the full read API — with 59 tests. The web UI is in
+> progress.
 
 ---
 
@@ -560,16 +561,23 @@ detail view renders it beside the errors that rejected it.
 | `search` | filename substring, case-insensitive |
 | `from`, `to` | upload date range, ISO-8601 |
 | `page`, `pageSize` | defaults 1 and 20, cap 100 |
-| `sort` | `createdAt:desc` (default), `createdAt:asc`, `filename:asc` |
+| `sort` | `createdAt:desc` (default), `createdAt:asc`, `filename:asc`, `filename:desc` |
 
 ```json
 {
   "data": [ { "documentId": "DOC-8f3a2b1c", "filename": "acme-fy25.pdf",
               "documentType": "FINANCIAL_STATEMENT", "status": "PROCESSED",
-              "createdAt": "2026-09-14T10:22:31.004Z" } ],
+              "sizeBytes": 248310, "attemptCount": 1, "failureReason": null,
+              "createdAt": "2026-09-14T10:22:31.004Z",
+              "updatedAt": "2026-09-14T10:22:39.881Z" } ],
   "pagination": { "page": 1, "pageSize": 20, "totalItems": 137, "totalPages": 7 }
 }
 ```
+
+The list returns a summary row rather than the full detail shape — no extracted
+data, no validation errors — since a table renders none of it and a page of 20
+full rows is needlessly large. `pageSize` is capped at 100: without a cap, one
+request could read the entire table.
 
 ### `GET /documents/:id/history`
 
@@ -588,7 +596,7 @@ detail view renders it beside the errors that rejected it.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /documents/:id/retry` | Manual retry of a terminally `FAILED` document; `409` if not in a retryable state |
+| `POST /documents/:id/retry` | Manual retry of a terminally `FAILED` document; `409` otherwise. `VALIDATION_FAILED` is refused with an explanation — the processor already succeeded, so a retry reproduces the same rejection. Resets the attempt budget and writes a `MANUAL_RETRY` event. |
 | `GET /documents/:id/file` | Streams the stored PDF for in-browser preview |
 | `GET /documents/stats` | Dashboard counts by status |
 | `GET /health` | Liveness plus database reachability and current queue depth |
@@ -666,7 +674,7 @@ for `metadata` and `extractedData` paths as a second line of defence.
 
 ## Testing Strategy
 
-Run with `npm test`. **49 tests**, integration over unit wherever a route
+Run with `npm test`. **59 tests**, integration over unit wherever a route
 exists — a test that drives the real HTTP stack and the real database catches
 wiring bugs that a mocked unit test cannot.
 
@@ -690,6 +698,13 @@ All six are covered. Their `describe` blocks are named to match this table.
 id returns `404`; concurrent uploads of identical bytes resolve to one document;
 two workers never claim the same row; a document abandoned in `PROCESSING` is
 reclaimed once its lease expires.
+
+**Read API** — repeated `status` params (Express gives a single value as a
+string and repeats as an array; both must reach the query identically); a filter
+combined with a search; a pagination boundary walked across three pages
+asserting no row is dropped or repeated; `pageSize` above the cap rejected;
+`/documents/stats` routed as a literal rather than parsed as a document id;
+manual retry refused on a document that succeeded.
 
 **Unit** — each validation rule including its boundary (`annualRevenue: 0`
 passes, `-1` fails; a date that matches the pattern but is not a real calendar

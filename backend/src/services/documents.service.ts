@@ -1,9 +1,15 @@
 import type { Document, DocumentType, Prisma } from '@prisma/client';
 import { customAlphabet } from 'nanoid';
-import { UnsupportedFileTypeError, ValidationError } from '../common/errors.js';
-import type { UploadResult } from '../common/types.js';
+import {
+  ConflictError,
+  NotFoundError,
+  UnsupportedFileTypeError,
+  ValidationError,
+} from '../common/errors.js';
+import { DOCUMENT_STATUSES, type DocumentStatus, type UploadResult } from '../common/types.js';
 import { logger } from '../config/logger.js';
 import * as documentsRepo from '../repositories/documents.repo.js';
+import * as eventsRepo from '../repositories/events.repo.js';
 import { computeContentHash, fileStorage, storageKeyFor } from '../storage/file-storage.js';
 
 // Excludes look-alike characters so ids stay readable when spoken or retyped.
@@ -106,4 +112,95 @@ function isUniqueViolation(err: unknown, field: string): boolean {
 
 export async function getDocument(id: string): Promise<Document | null> {
   return documentsRepo.findById(id);
+}
+
+export interface ListDocumentsOptions extends documentsRepo.ListFilters {
+  page: number;
+  pageSize: number;
+  sortField: 'createdAt' | 'filename';
+  sortDirection: 'asc' | 'desc';
+}
+
+export async function listDocuments(options: ListDocumentsOptions) {
+  const { items, totalItems } = await documentsRepo.list(options);
+
+  return {
+    items,
+    pagination: {
+      page: options.page,
+      pageSize: options.pageSize,
+      totalItems,
+      // A page size is always at least 1, so this cannot divide by zero.
+      totalPages: Math.ceil(totalItems / options.pageSize),
+    },
+  };
+}
+
+export async function getHistory(documentId: string) {
+  // Distinguish "no such document" from "a document with no events yet", which
+  // would otherwise both return an empty array.
+  const document = await documentsRepo.findById(documentId);
+  if (!document) throw new NotFoundError('Document');
+
+  return eventsRepo.listForDocument(documentId);
+}
+
+/**
+ * Dashboard counts. Statuses absent from the grouped query are filled in as
+ * zero, so the UI can render a stable set of tiles rather than branching on
+ * which keys happen to exist.
+ */
+export async function getStats() {
+  const counts = await documentsRepo.countByStatus();
+
+  const byStatus = Object.fromEntries(
+    DOCUMENT_STATUSES.map((status) => [status, counts[status] ?? 0]),
+  ) as Record<DocumentStatus, number>;
+
+  return {
+    total: Object.values(byStatus).reduce((sum, n) => sum + n, 0),
+    byStatus,
+    // The dashboard's headline figure: work neither finished nor abandoned.
+    inProgress: byStatus.UPLOADED + byStatus.RETRY_PENDING + byStatus.PROCESSING,
+  };
+}
+
+/** The stored file, for the PDF preview. */
+export async function getDocumentFile(
+  documentId: string,
+): Promise<{ document: Document; data: Buffer }> {
+  const document = await documentsRepo.findById(documentId);
+  if (!document) throw new NotFoundError('Document');
+
+  const data = await fileStorage.read(document.storageKey);
+  return { document, data };
+}
+
+/**
+ * Manual retry.
+ *
+ * Only a terminally `FAILED` document is eligible. `VALIDATION_FAILED` is
+ * excluded on purpose: the processor already succeeded and the content is bad,
+ * so a retry would deterministically reproduce the same rejection. A document
+ * still moving through the pipeline is excluded because the worker owns it.
+ */
+export async function retryDocument(documentId: string): Promise<Document> {
+  const document = await documentsRepo.findById(documentId);
+  if (!document) throw new NotFoundError('Document');
+
+  if (document.status !== 'FAILED') {
+    throw new ConflictError(
+      document.status === 'VALIDATION_FAILED'
+        ? 'This document was read successfully but its contents are invalid, so retrying would produce the same result.'
+        : `A document with status ${document.status} cannot be retried.`,
+    );
+  }
+
+  const retried = await documentsRepo.resetForManualRetry(documentId);
+  logger.info(
+    { documentId, previousAttempts: document.attemptCount },
+    'manual retry requested',
+  );
+
+  return retried;
 }
