@@ -55,9 +55,9 @@ exactly what happened to a document — including failed attempts and retries.
 | Duplicate detection | SHA-256 content hash, unique constraint, idempotent response |
 | History | Append-only `document_events` table |
 | Search and filtering | Status, type, date range, filename search, paginated |
-| UI | Next.js — dashboard, upload, list, detail with timeline |
+| UI | Next.js — dashboard, upload, list, detail with timeline *(in progress)* |
 | Observability | Structured JSON logs keyed by `documentId` and attempt |
-| Testing | Unit, integration (Supertest), and one E2E path |
+| Testing | 59 tests — unit for rules, integration through the real HTTP stack and database |
 
 ---
 
@@ -73,13 +73,17 @@ exactly what happened to a document — including failed attempts and retries.
 | Validation | Zod | One schema definition reused for request validation, extracted-data validation, and TypeScript types |
 | Logging | pino | Structured JSON, low overhead, child loggers for per-document context |
 | Frontend | Next.js 15 (App Router) | File-based routing, server components for initial loads, first-class Vercel deployment |
-| UI | Tailwind CSS + shadcn/ui | Accessible primitives, professional look without hand-rolling components |
-| Data fetching | TanStack Query | Cache management and conditional polling while documents are in flight |
+
+| UI | Tailwind CSS | Utility classes; no component library, so nothing to explain that I did not write |
+| Data fetching | `fetch` in client components | Polling while a document is in flight is a `setInterval` and a state update; a cache library would be more to justify than it saves at four screens |
 | Testing | Vitest + Supertest | Fast runner; integration tests drive the real HTTP stack and database |
 | Local orchestration | Docker Compose | Single-command startup as the assignment suggests |
 
 Everything above is open source and free. See [Deployment](#deployment) for the
 hosting choices, which are also free-tier.
+
+The frontend rows describe the stack being built now; every backend row is in
+the code today.
 
 ---
 
@@ -174,10 +178,13 @@ src/
 ├── config/
 │   ├── env.ts                   # zod-parsed process.env, fails fast at boot
 │   ├── db.ts                    # Prisma client singleton
+│   ├── logger.ts                # pino + redaction of document contents
 │   └── queue.ts                 # JobQueue interface + Postgres implementation
 ├── routes/
 │   ├── index.ts                 # mounts /api/documents, /api/health
+│   ├── health.routes.ts         # liveness + queue depth
 │   └── documents.routes.ts      # router + validation middleware only
+│                                #   note: /stats is registered before /:id
 ├── controllers/
 │   └── documents.controller.ts  # req → DTO, call service, shape response
 ├── services/
@@ -191,7 +198,7 @@ src/
 │   ├── validator.ts             # Zod rules over extracted fields
 │   └── error-classifier.ts      # which failures are retryable
 ├── storage/
-│   └── file-storage.ts          # interface + disk/db implementations
+│   └── file-storage.ts          # interface + disk implementation
 ├── middleware/
 │   ├── upload.ts                # multer: memory storage, 10MB, PDF filter
 │   ├── validate.ts              # zod schema → 400 with field errors
@@ -648,9 +655,22 @@ Structured JSON via pino. The worker creates a child logger bound to
 automatically.
 
 ```json
-{"level":50,"time":"2026-09-14T10:22:34.902Z","documentId":"DOC-8f3a2b1c",
- "attempt":1,"status":"FAILED","failureReason":"PROCESSOR_TIMEOUT",
- "durationMs":2785,"correlationId":"job_4a1f","msg":"processing attempt failed"}
+{"level":"warn","time":"2026-09-14T18:52:05.113Z","documentId":"DOC-B43YQYLVHR",
+ "attempt":1,"status":"RETRY_PENDING","reason":"PROCESSOR_TIMEOUT",
+ "retryInMs":1563,"nextAttemptAt":"2026-09-14T18:52:06.676Z",
+ "attemptsRemaining":2,"durationMs":300,
+ "msg":"processing attempt failed; retry scheduled"}
+```
+
+A document that exhausts its retries produces this sequence, which is the whole
+answer to "why did it fail?" — three attempts, the reason each time, the backoff
+between them (jittered, hence 1563ms rather than exactly 2000ms), and the
+terminal state:
+
+```
+18:52:05 WARN  attempt=1 RETRY_PENDING  PROCESSOR_TIMEOUT  retryInMs=1563
+18:52:07 WARN  attempt=2 RETRY_PENDING  PROCESSOR_TIMEOUT  retryInMs=4351
+18:52:12 ERROR attempt=3 FAILED         ATTEMPTS_EXHAUSTED lastFailure=PROCESSOR_TIMEOUT
 ```
 
 ### Answering "why did DOC-12345 fail?"
@@ -740,7 +760,7 @@ PostgreSQL instance.
 git clone <repo-url>
 cd Document_processing_pipeline
 cp .env.example .env
-docker compose up --build
+UID=$(id -u) GID=$(id -g) docker compose up --build
 ```
 
 | Service | URL |
@@ -749,8 +769,25 @@ docker compose up --build
 | API | http://localhost:4000/api |
 | Health | http://localhost:4000/api/health |
 
-Compose starts four services: `postgres`, `api`, `worker`, and `web`.
-Migrations run automatically on API startup.
+Compose starts four services: `postgres`, `api`, `worker`, and `web`. Migrations
+run automatically on API startup.
+
+`UID`/`GID` are passed so the containers run as you rather than root — without
+them, the bind-mounted `uploads/` directory is created root-owned and every
+upload fails with `EACCES`.
+
+**While the UI is in progress**, the `web` service has nothing to build, so start
+the backend explicitly:
+
+```bash
+UID=$(id -u) GID=$(id -g) docker compose up -d postgres api worker
+curl -s localhost:4000/api/health
+```
+
+After a schema change, add `-V --build`: `prisma generate` runs at image build
+time into a container-only `node_modules` volume, and Docker does not repopulate
+an anonymous volume that already exists, so a plain `--build` would leave the
+old client in place.
 
 ### Without Docker
 
@@ -916,9 +953,10 @@ winner's ID. **Claim:** because the queue is the document table, a document is
 structurally incapable of being enqueued twice — and `FOR UPDATE SKIP LOCKED`
 guarantees that two workers running the claim statement concurrently take
 different rows, so the same document is never processed in parallel. **Worker:**
-the handler is idempotent — it operates on freshly read state, refuses documents
-already in a terminal state, and overwrites rather than appends extracted data,
-so a job reclaimed after a crash cannot corrupt anything or double-count.
+the claim selects only `UPLOADED` and `RETRY_PENDING`, so a document that has
+already reached a terminal state is structurally unclaimable rather than
+relying on a guard inside the handler. Extracted data is overwritten rather than
+appended, so a job reclaimed after a crash cannot double-count.
 
 ### What happens if the application crashes during processing?
 
@@ -1010,21 +1048,23 @@ pretending it is not.
 ```
 Document_processing_pipeline/
 ├── README.md                  # this file
-├── AI_USAGE.md                # AI tooling disclosure
+├── AI_USAGE.md                # AI tooling disclosure          (pending)
 ├── docker-compose.yml
 ├── .env.example
 ├── backend/
-│   ├── prisma/schema.prisma
+│   ├── prisma/
+│   │   ├── schema.prisma
+│   │   └── migrations/
 │   ├── src/                   # layered as described above
 │   └── tests/
-│       ├── unit/
-│       ├── integration/
-│       └── fixtures/
-├── frontend/
-│   ├── app/                   # dashboard, upload, documents, detail
-│   ├── components/
-│   └── lib/
-├── packages/shared/           # domain types and Zod schemas
+│       ├── unit/              # validation rules, classifier, backoff
+│       ├── integration/       # health, upload, processing, read API
+│       ├── fixtures/
+│       └── helpers/
+├── frontend/                  # Next.js                        (in progress)
 └── docs/
-    └── architecture.png
+    └── architecture.png                                        (pending)
 ```
+
+Items marked *pending* are the remaining work, tracked against §16 and the
+assignment's deliverables list.

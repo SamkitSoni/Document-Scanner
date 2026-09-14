@@ -124,6 +124,19 @@ The surface the UI is built against. Every endpoint maps to a screen in §8.
   just a status code: retrying it would deterministically reproduce the
   rejection. Writes a `MANUAL_RETRY` event and resets the attempt budget.
 
+### Every endpoint, in one place
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/api/health` | db reachability + queue depth; `503` when down |
+| `POST` | `/api/documents` | multipart; `201`, or `200` + `duplicate: true` |
+| `GET` | `/api/documents` | filters, search, date range, pagination, sort |
+| `GET` | `/api/documents/stats` | **registered before `/:id`** |
+| `GET` | `/api/documents/:id` | detail; `result` vs `rejectedData` |
+| `GET` | `/api/documents/:id/history` | `404` if the document is unknown |
+| `GET` | `/api/documents/:id/file` | PDF, `Content-Disposition: inline` |
+| `POST` | `/api/documents/:id/retry` | `409` unless terminally `FAILED` |
+
 ---
 
 ## Test inventory
@@ -195,6 +208,10 @@ backend/src/
 ```
 
 Layering is one-directional: **routes → controllers → services → repositories**.
+
+The empty `packages/shared/` scaffold was removed — types are shared by importing
+from `backend/src/common/types.ts`, and a workspace package for one consumer was
+ceremony. The frontend will define its own API response types.
 Routes never touch the database; services never see `req`/`res`.
 
 ---
@@ -233,15 +250,14 @@ spending remaining time deepening it instead of building the UI.
 
 Decided deliberately, not by default: **the backend is tested, the UI is not.**
 
-- **Phase 4:** ~6 tests, written *with* the endpoints — one per endpoint, plus a
-  filter-combination and a pagination-boundary case. Query parsing is where the
-  bugs hide (`req.query` is a getter in Express 5; repeatable params; the
-  `pageSize` cap), and those are invisible in a browser — page 2 looks fine even
-  when it silently skips a row.
-- **UI:** no automated tests. Manual verification. The brief does not ask for
-  frontend tests and a Playwright setup would cost hours that the UI itself
-  needs.
-- **Then stop.** ~55 tests at submission.
+- **Phase 4: done** — 10 tests, written *with* the endpoints. Estimated ~6; the
+  retry and file endpoints each needed a success *and* a rejection case. They
+  target where the bugs hide (`req.query` is a getter in Express 5; repeatable
+  params; the `pageSize` cap; the `/stats` route-order trap) — all invisible in
+  a browser, where page 2 looks fine even when it silently skips a row.
+- **UI: no automated tests.** Manual verification. The brief does not ask for
+  frontend tests and a Playwright setup would cost hours the UI itself needs.
+- **Then stop.** 59 tests is the submission number unless something breaks.
 
 The reason they are written alongside rather than at the end: deferred tests
 land in the final hours competing with deployment, `AI_USAGE.md` and the
