@@ -10,6 +10,9 @@ RUN npm install
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY . .
+# Created ahead of the volume mount so it is owned by the runtime user rather
+# than root; a root-owned upload directory would make writes fail.
+RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
 EXPOSE 4000
 CMD ["npm", "run", "dev"]
 
@@ -30,5 +33,7 @@ RUN npm ci --omit=dev
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
+RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
+USER node
 EXPOSE 4000
 CMD ["npm", "run", "start"]

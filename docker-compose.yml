@@ -19,6 +19,7 @@ services:
     build:
       context: ./backend
       target: dev
+    user: "${UID:-1000}:${GID:-1000}"
     command: sh -c "npx prisma migrate deploy && npm run dev"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/docpipeline?schema=public
@@ -42,6 +43,7 @@ services:
     build:
       context: ./backend
       target: dev
+    user: "${UID:-1000}:${GID:-1000}"
     command: npm run dev:worker
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/docpipeline?schema=public

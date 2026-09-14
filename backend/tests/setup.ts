@@ -3,8 +3,9 @@
  * this with --env-file, but doing it here keeps the test command portable and
  * lets TEST_DATABASE_URL override the development database.
  */
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 function loadEnvFile(path: string): void {
   let contents: string;
@@ -28,6 +29,11 @@ function loadEnvFile(path: string): void {
 loadEnvFile(resolve(process.cwd(), '.env'));
 
 process.env.NODE_ENV = 'test';
+
+// Tests write uploads to an isolated temp directory: the development uploads
+// folder must never be polluted by a test run, and a directory created by a
+// Docker volume mount may not even be writable by this user.
+process.env.STORAGE_PATH = mkdtempSync(join(tmpdir(), 'docpipeline-test-'));
 // Tests must never run against the development database.
 if (process.env.TEST_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
