@@ -82,7 +82,12 @@ function toDetailResponse(d: DocumentRow) {
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
     metadata: d.metadata,
-    result: d.extractedData ?? null,
+    // `result` means "data we accepted". A failed validation still has an
+    // extraction worth seeing — it is the first thing an operator asks about —
+    // but it is surfaced separately so nothing downstream mistakes rejected
+    // data for a usable result.
+    result: d.status === 'PROCESSED' ? d.extractedData : null,
+    rejectedData: d.status === 'VALIDATION_FAILED' ? (d.extractedData ?? null) : null,
     failureReason: d.failureReason ?? null,
     validationErrors: d.validationErrors ?? null,
   };

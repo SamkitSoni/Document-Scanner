@@ -38,3 +38,11 @@ process.env.STORAGE_PATH = mkdtempSync(join(tmpdir(), 'docpipeline-test-'));
 if (process.env.TEST_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 }
+
+// Processing must be deterministic and instant in tests. The mock's simulated
+// delay is what makes a run feel realistic in a demo and slow in a suite; the
+// outcome is then decided by filename hints and content hash, never by chance.
+process.env.MOCK_PROCESSOR_DELAY_MS = '0';
+process.env.MOCK_PROCESSOR_MODE ??= 'random';
+process.env.MAX_PROCESSING_ATTEMPTS ??= '3';
+

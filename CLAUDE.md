@@ -7,7 +7,7 @@ pipeline with asynchronous extraction, validation, and retries.
 engineering answers. **This file is the build log**: what exists, what is next,
 and the decisions worth not re-deriving.
 
-**Last updated:** end of phase 2 (commit `7c79ed8`).
+**Last updated:** end of phase 3 (async processing and retries).
 
 ---
 
@@ -17,25 +17,29 @@ and the decisions worth not re-deriving.
 | --- | --- | --- |
 | 1. Foundation | **Done** | 3 tests; `docker compose up` healthy |
 | 2. Upload + persistence | **Done** | 14 tests; upload + dedupe confirmed via Docker |
-| 3. Async processing + retries | Not started | — |
-| 4. Validation + read APIs | Not started | — |
-| 5. Testing | Partial (17 tests) | — |
+| 3. Async processing + retries | **Done** | 41 tests; full lifecycle + crash recovery confirmed via Docker |
+| 4. Validation + read APIs | Partial — validation done; read APIs pending | — |
+| 5. Testing | Partial (58 tests) | 5 of 6 required scenarios covered |
 | 6. Frontend | Not started | — |
 | 7. Deployment + docs | Not started | — |
 
-**17 tests passing, typecheck clean.**
+**58 tests passing, typecheck clean.**
 
 ### Verification commands
 
 ```bash
 cd backend
-npm test            # 17 passing
+npm test            # 58 passing
 npx tsc --noEmit    # clean
 npm run dev         # API on :4000
 
 # Full stack (web service fails until phase 6 — start services explicitly)
-docker compose up -d postgres api worker
+UID=$(id -u) GID=$(id -g) docker compose up -d postgres api worker
 curl -s localhost:4000/api/health
+
+# Demonstrate a path on command: filename hints beat the hash-seeded draw.
+curl -X POST localhost:4000/api/documents \
+  -F documentType=FINANCIAL_STATEMENT -F file=@timeout.pdf
 ```
 
 ---
@@ -47,8 +51,16 @@ curl -s localhost:4000/api/health
   parsing, SHA-256 hashing, duplicate detection, transactional document+event write
 - `GET /api/documents/:id` — full detail shape
 - Structured error envelope with correlation ids; no raw errors reach clients
-- Documents land in `UPLOADED` with `nextAttemptAt` set — **nothing consumes them
-  yet**; the worker idles until phase 3
+- **Full async lifecycle**: upload → worker claims → `PROCESSED` /
+  `VALIDATION_FAILED` / `FAILED`, unattended
+- Postgres queue: atomic `FOR UPDATE SKIP LOCKED` claim, concurrent workers
+  never collide
+- Retries: 3 attempts, 2s/4s/8s backoff with ±25% jitter, classifier decides
+  what is worth retrying
+- Stale-job reaper reclaims documents abandoned in `PROCESSING`; graceful
+  shutdown drains in-flight work
+- Processing logs answer "why did DOC-X fail?" — attempt, reason, backoff,
+  terminal state, with no document contents
 
 ---
 
@@ -66,12 +78,13 @@ Supertest · Next.js 15 (phase 6) · Docker Compose.
 ```
 backend/src/
 ├── server.ts                    # API entrypoint
-├── worker.ts                    # worker entrypoint (idles; phase 3 fills in)
+├── worker.ts                    # poll loop (concurrency slots) + reaper + drain-on-SIGTERM
 ├── app.ts                       # buildApp() — no listen(), so Supertest can drive it
-├── config/       env.ts · logger.ts · db.ts
+├── config/       env.ts · logger.ts · db.ts · queue.ts   # queue.ts = the Postgres JobQueue
 ├── routes/       index.ts · health.routes.ts · documents.routes.ts
 ├── controllers/  documents.controller.ts
-├── services/     documents.service.ts
+├── services/     documents.service.ts · processing.service.ts  # the state machine
+├── processing/   mock-processor.ts · validator.ts · error-classifier.ts
 ├── repositories/ documents.repo.ts · events.repo.ts
 ├── storage/      file-storage.ts      # disk + postgres drivers behind an interface
 ├── middleware/   upload · validate · request-context · error-handler · not-found
@@ -154,35 +167,44 @@ Do not rediscover these.
   `tsconfig.build.json` sets it, or including `tests/**` fails to compile.
 - **`docker compose up` with no arguments fails** until phase 6 — the `web`
   service points at an empty `frontend/`.
+- **`$queryRaw` returns raw snake_case columns, not Prisma's camelCase.** The
+  claim statement must be raw (`FOR UPDATE SKIP LOCKED` has no query-builder
+  form), so its result is *not* a `Document`: `attempt_count` arrives, and
+  `document.attemptCount` reads `undefined`. This failed silently and
+  nonsensically — every document went terminal on attempt 1 with
+  `ATTEMPTS_EXHAUSTED`, because `undefined < 3` is false. `toDocument()` in
+  `config/queue.ts` is the one place the column names are allowed to exist.
 
 ---
 
-## Next: phase 3 — async processing and retries
+## Next: phase 4 — read APIs
 
-The interesting phase. Aim:
+Validation landed with phase 3 (`processing/validator.ts` → `VALIDATION_FAILED`),
+so what remains of phase 4 is the read surface the UI needs:
 
-1. **`JobQueue` interface** (`claimNext`, `complete`, `scheduleRetry`) with the
-   Postgres implementation — the atomic `FOR UPDATE SKIP LOCKED` claim.
-2. **Mock processor** — deterministic by content hash so tests are reproducible,
-   with filename hints (`*timeout*`, `*invalid*`, `*error*`) and a
-   `MOCK_PROCESSOR_MODE` override. Never real randomness in tests.
-3. **State machine** in `processing.service.ts`: `PROCESSING` → terminal, each
-   transition writing document row + event in one transaction.
-4. **Error classifier** — `TIMEOUT`/`ERROR` retry; `INVALID_RESULT` does not.
-5. **Retry** — 3 attempts, exponential backoff 2s/4s/8s **with jitter** (a burst
-   failing together must not retry in lockstep).
-6. **Stale-job reaper** — reclaim `PROCESSING` rows past `JOB_LEASE_TIMEOUT_MS`.
-7. **Graceful shutdown** — finish in-flight work on `SIGTERM`.
+1. **`GET /documents`** — list with `status` / `documentType` (both repeatable),
+   `search`, `from`/`to`, `page`/`pageSize` (default 20, cap 100), `sort`.
+   `documents.repo.list()` already implements the query; it needs a controller,
+   a Zod query schema and the `{ data, pagination }` envelope.
+2. **`GET /documents/:id/history`** — `events.repo.listForDocument()` exists;
+   map it to `{ status, timestamp, attempt, reason }`.
+3. **`GET /documents/stats`** — `countByStatus()` exists; the dashboard needs it.
+4. **`GET /documents/:id/file`** — stream the PDF for the preview.
+5. **`POST /documents/:id/retry`** — manual retry. `resetForManualRetry()` is
+   written; it needs the `409` guard for a document that is not terminally
+   `FAILED`.
 
-**Done when:** a document moves through the full lifecycle unattended, and a
-worker killed mid-processing has its document reclaimed and completed.
+Note the route-order trap: `/documents/stats` must be registered **before**
+`/documents/:id`, or `stats` is parsed as an id and rejected by the id regex.
+
+**Done when:** the UI could be built against the API without further backend work.
 
 ### Then
 
-- **Phase 4:** Zod validator over extracted fields → `VALIDATION_FAILED`;
-  list/history/stats/file endpoints; filtering, search, pagination; manual retry.
-- **Phase 5:** the six required test scenarios named explicitly (upload, invalid
-  data, success, processor failure, failure-then-retry, same document twice).
+- **Phase 5:** one test file naming the six required scenarios explicitly. Five
+  are already covered by `tests/integration/processing.test.ts`; the sixth
+  (same document twice) lives in `upload.test.ts`. The gap worth closing is
+  list/filter/pagination coverage once phase 4 lands.
 - **Phase 6:** Next.js — dashboard, upload, list, detail with timeline. Only
   after the backend is done: the brief says twice that a polished UI over a weak
   backend scores lower.
@@ -201,3 +223,7 @@ worker killed mid-processing has its document reclaimed and completed.
 - [ ] Verify a clean clone runs with `docker compose up`
 - [ ] Note the Render cold-start delay next to the live demo link
 - [ ] Keep README's engineering answers in sync with what the code actually does
+- [ ] README documents the detail response as `result: null` on failure; the
+      implementation also returns `rejectedData` (the extraction that failed
+      validation, kept so an operator can see what was read). Update the API
+      reference to match.
