@@ -34,6 +34,14 @@ services:
       - ./backend:/app
       - /app/node_modules
       - uploads_data:/app/uploads
+    healthcheck:
+      # Reports healthy only once the database is reachable — which is after
+      # `prisma migrate deploy` has finished. This is what the worker waits on.
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +51,7 @@ services:
       context: ./backend
       target: dev
     user: "${UID:-1000}:${GID:-1000}"
+    restart: unless-stopped
     command: npm run dev:worker
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/docpipeline?schema=public
@@ -57,19 +66,25 @@ services:
       postgres:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
 
   web:
     build:
       context: ./frontend
       target: dev
+    user: "${UID:-1000}:${GID:-1000}"
     command: npm run dev
     environment:
+      # Read by the browser, not the container, so it must be the host-facing
+      # URL rather than the compose service name.
       NEXT_PUBLIC_API_URL: http://localhost:4000/api
     ports:
       - "3000:3000"
     volumes:
       - ./frontend:/app
+      # Anonymous volumes keep the container's node_modules and .next off the
+      # bind mount: without them the container writes a root-owned .next into
+      # ./frontend and a later host-side `npm run build` fails with EACCES.
       - /app/node_modules
       - /app/.next
     depends_on:
