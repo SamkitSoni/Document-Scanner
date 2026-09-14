@@ -55,10 +55,6 @@ model Document {
   validationErrors Json?   @map("validation_errors")
   metadata         Json    @default("{}")
 
-  /// Raw bytes, used only when STORAGE_DRIVER=postgres (deployed environments
-  /// where the filesystem is ephemeral).
-  fileData Bytes? @map("file_data")
-
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

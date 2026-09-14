@@ -26,7 +26,6 @@ services:
       PORT: 4000
       NODE_ENV: development
       CORS_ORIGIN: http://localhost:3000
-      STORAGE_DRIVER: disk
       STORAGE_PATH: /app/uploads
       RUN_WORKER_IN_PROCESS: "false"
     ports:
@@ -48,7 +47,6 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/docpipeline?schema=public
       NODE_ENV: development
-      STORAGE_DRIVER: disk
       STORAGE_PATH: /app/uploads
       MOCK_PROCESSOR_MODE: random
     volumes:

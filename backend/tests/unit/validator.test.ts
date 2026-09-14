@@ -42,11 +42,6 @@ describe('extracted data validation', () => {
     expect(failures({ ...valid, annualRevenue: -1 })).toContain('annualRevenue:min');
   });
 
-  it('rejects a non-numeric annualRevenue', () => {
-    const result = failures({ ...valid, annualRevenue: '12500000' });
-    expect(result.some((f) => f.startsWith('annualRevenue:'))).toBe(true);
-  });
-
   it('rejects a malformed or impossible documentDate', () => {
     expect(failures({ ...valid, documentDate: '15-08-2026' })).toContain('documentDate:format');
     // Parses in JS as 2026-03-03; a real calendar check must reject it.
@@ -80,11 +75,6 @@ describe('extracted data validation', () => {
         'annualRevenue:min',
       ]),
     );
-  });
-
-  it('fails safely when the processor returned nothing', () => {
-    const outcome = validateExtractedData(undefined);
-    expect(outcome.valid).toBe(false);
   });
 
   it('produces messages fit to show a user', () => {

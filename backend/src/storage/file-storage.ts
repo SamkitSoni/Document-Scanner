@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { prisma } from '../config/db.js';
 import { env } from '../config/env.js';
 import { NotFoundError } from '../common/errors.js';
 
 /**
- * Storage is behind an interface because the deployed environment cannot use
- * the filesystem: Render's disk is ephemeral, so uploaded bytes would vanish on
- * redeploy. Swapping to S3 or R2 later means adding a third implementation, not
- * changing any caller.
+ * Storage sits behind an interface because uploaded bytes outlive this
+ * project's local disk: a deployed container's filesystem is ephemeral, so the
+ * production answer is object storage. Adding S3 or R2 means a second
+ * implementation here and no change to any caller.
  */
 export interface FileStorage {
   save(key: string, data: Buffer): Promise<string>;
@@ -55,36 +54,7 @@ class DiskStorage implements FileStorage {
   }
 }
 
-/**
- * Stores bytes in the documents row itself. Used where the filesystem is not
- * durable. Acceptable at this scale given the 10MB upload cap; object storage
- * is the right answer for real volume.
- */
-class PostgresStorage implements FileStorage {
-  async save(key: string): Promise<string> {
-    // The bytes are written by the upload transaction alongside the row, so
-    // that document creation and its file land atomically.
-    return key;
-  }
-
-  async read(key: string): Promise<Buffer> {
-    const row = await prisma.document.findUnique({
-      where: { id: key },
-      select: { fileData: true },
-    });
-    if (!row?.fileData) throw new NotFoundError('Stored file');
-    return Buffer.from(row.fileData);
-  }
-
-  async delete(): Promise<void> {
-    // Cascades with the document row.
-  }
-}
-
-export const fileStorage: FileStorage =
-  env.STORAGE_DRIVER === 'postgres' ? new PostgresStorage() : new DiskStorage(env.STORAGE_PATH);
-
-export const usesInlineStorage = env.STORAGE_DRIVER === 'postgres';
+export const fileStorage: FileStorage = new DiskStorage(env.STORAGE_PATH);
 
 /** SHA-256 of the file bytes — the basis for duplicate detection. */
 export function computeContentHash(data: Buffer): string {

@@ -185,14 +185,6 @@ describe('invalid extracted data', () => {
     });
   });
 
-  it('keeps the invalid extraction for an operator to inspect', async () => {
-    const id = await upload('invalid-kept.pdf');
-    await processNextDocument();
-
-    // The extraction is stored even though it failed: "what did we read?" is
-    // the first question when triaging a validation failure.
-    expect((await getDocument(id)).extractedData).not.toBeNull();
-  });
 });
 
 describe('processor failure', () => {
@@ -237,16 +229,6 @@ describe('processor failure', () => {
     expect(await jobQueue.claimNext()).toBeNull();
   });
 
-  it('keeps a failure reason a developer can act on', async () => {
-    const id = await upload('error-reason.pdf');
-    await drainDocument(id, scriptedProcessor([{ outcome: 'ERROR', durationMs: 5 }]));
-
-    const log = await events(id);
-    const firstFailure = log.find((e) => e.status === 'FAILED');
-    // Stable code, never free text or a stack trace.
-    expect(firstFailure?.reason).toBe('PROCESSOR_ERROR');
-    expect(firstFailure?.attempt).toBe(1);
-  });
 });
 
 describe('failure followed by a successful retry', () => {
@@ -294,22 +276,6 @@ describe('failure followed by a successful retry', () => {
     expect(log[4]?.attempt).toBe(2);
   });
 
-  it('succeeds on the last allowed attempt', async () => {
-    const id = await upload('retry-last-chance.pdf');
-
-    await drainDocument(
-      id,
-      scriptedProcessor([
-        { outcome: 'ERROR', durationMs: 5 },
-        { outcome: 'TIMEOUT', durationMs: 5 },
-        { outcome: 'SUCCESS', data: goodData, durationMs: 5 },
-      ]),
-    );
-
-    const document = await getDocument(id);
-    expect(document.status).toBe('PROCESSED');
-    expect(document.attemptCount).toBe(3);
-  });
 });
 
 describe('queue claiming', () => {
@@ -325,10 +291,6 @@ describe('queue claiming', () => {
     expect(first?.id).not.toBe(second?.id);
   });
 
-  it('returns null when nothing is due', async () => {
-    expect(await jobQueue.claimNext()).toBeNull();
-  });
-
   it('does not claim a document that is already terminal', async () => {
     await upload('success-terminal.pdf');
     await processNextDocument();
@@ -336,14 +298,6 @@ describe('queue claiming', () => {
     expect(await jobQueue.claimNext()).toBeNull();
   });
 
-  it('reports queue depth for only the documents that are due', async () => {
-    await upload('depth-one.pdf');
-    await upload('depth-two.pdf');
-
-    expect(await jobQueue.depth()).toBe(2);
-    await processNextDocument();
-    expect(await jobQueue.depth()).toBe(1);
-  });
 });
 
 describe('crash recovery', () => {

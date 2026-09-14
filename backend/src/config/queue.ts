@@ -24,9 +24,6 @@ export interface JobQueue {
   reclaimExpired(leaseTimeoutMs: number): Promise<string[]>;
 }
 
-/** A transaction-scoped Prisma client, so callers can compose with their own transaction. */
-export type TxClient = Prisma.TransactionClient;
-
 /**
  * Raw shape returned by `$queryRaw`.
  *
@@ -52,7 +49,6 @@ interface DocumentRow {
   extracted_data: Prisma.JsonValue;
   validation_errors: Prisma.JsonValue;
   metadata: Prisma.JsonValue;
-  file_data: Uint8Array | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -74,8 +70,6 @@ function toDocument(row: DocumentRow): Document {
     extractedData: row.extracted_data,
     validationErrors: row.validation_errors,
     metadata: row.metadata,
-    // Same Bytes/Uint8Array boundary normalisation as the repository layer.
-    fileData: row.file_data ? new Uint8Array(row.file_data) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

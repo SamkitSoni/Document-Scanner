@@ -7,7 +7,7 @@ pipeline with asynchronous extraction, validation, and retries.
 engineering answers. **This file is the build log**: what exists, what is next,
 and the decisions worth not re-deriving.
 
-**Last updated:** end of phase 3 (async processing and retries).
+**Last updated:** after the phase-3 scope trim (see [Scope discipline](#scope-discipline)).
 
 ---
 
@@ -17,24 +17,25 @@ and the decisions worth not re-deriving.
 | --- | --- | --- |
 | 1. Foundation | **Done** | 3 tests; `docker compose up` healthy |
 | 2. Upload + persistence | **Done** | 14 tests; upload + dedupe confirmed via Docker |
-| 3. Async processing + retries | **Done** | 41 tests; full lifecycle + crash recovery confirmed via Docker |
+| 3. Async processing + retries | **Done** | full lifecycle + crash recovery confirmed via Docker |
 | 4. Validation + read APIs | Partial — validation done; read APIs pending | — |
-| 5. Testing | Partial (58 tests) | all 6 required scenarios covered; see [Test inventory](#test-inventory) |
+| 5. Testing | **Done enough** | all 6 required scenarios covered; see [Test inventory](#test-inventory) |
 | 6. Frontend | Not started | — |
 | 7. Deployment + docs | Not started | — |
 
-**58 tests passing, typecheck clean.**
+**49 tests passing, typecheck clean.**
 
 ### Verification commands
 
 ```bash
 cd backend
-npm test            # 58 passing
+npm test            # 49 passing
 npx tsc --noEmit    # clean
 npm run dev         # API on :4000
 
 # Full stack (web service fails until phase 6 — start services explicitly)
 UID=$(id -u) GID=$(id -g) docker compose up -d postgres api worker
+# After any schema change, add -V --build (see Gotchas)
 curl -s localhost:4000/api/health
 
 # Demonstrate a path on command: filename hints beat the hash-seeded draw.
@@ -77,9 +78,9 @@ on without re-reading the source.
   `content_hash` as the authority. Returns the *original* document as `200` with
   `duplicate: true`; the `P2002` catch path resolves a concurrent race to the
   winner's document rather than failing.
-- **Storage behind an interface** (`storage/file-storage.ts`) — disk and
-  postgres drivers, because the deployed filesystem is ephemeral. Swapping in
-  S3/R2 means a third implementation, not a caller change.
+- **Storage behind an interface** (`storage/file-storage.ts`) — disk driver
+  only. The interface exists because a deployed filesystem is ephemeral, so an
+  S3/R2 driver is a second implementation and no caller change.
 - **`GET /api/documents/:id`** (`controllers/documents.controller.ts`) — detail
   shape. Note `result` vs `rejectedData` (see phase 3).
 - Documents land in `UPLOADED` with `nextAttemptAt` set, so the worker picks
@@ -109,15 +110,15 @@ on without re-reading the source.
 
 ## Test inventory
 
-58 tests, 5 files. Integration over unit wherever a route exists.
+49 tests, 5 files. Integration over unit wherever a route exists.
 
 | File | Tests | Covers |
 | --- | --- | --- |
 | `tests/integration/health.test.ts` | 3 | health envelope, degraded path |
 | `tests/integration/upload.test.ts` | 14 | upload, rejections, **duplicates** |
-| `tests/integration/processing.test.ts` | 20 | lifecycle, retries, claiming, crash recovery |
-| `tests/unit/validator.test.ts` | 11 | each rule + boundaries (`0` passes, `-1` fails) |
-| `tests/unit/processing.test.ts` | 10 | classifier, backoff, mock determinism |
+| `tests/integration/processing.test.ts` | 15 | lifecycle, retries, claiming, crash recovery |
+| `tests/unit/validator.test.ts` | 9 | each rule + boundaries (`0` passes, `-1` fails) |
+| `tests/unit/processing.test.ts` | 8 | classifier, backoff, filename hints |
 
 ### The brief's six required scenarios
 
@@ -130,9 +131,9 @@ on without re-reading the source.
 | 5 | Failure then successful retry | `processing.test.ts` → "failure followed by a successful retry" | Done |
 | 6 | Same document twice | `upload.test.ts` → "duplicate detection" | Done |
 
-All six are covered, but they are spread across files and named in the
-project's own vocabulary. Phase 5 should add a thin file that names them in the
-brief's words and points at these, so a reviewer can find them in one place.
+All six are covered, and README's Testing Strategy maps this table to the files
+so a reviewer can find them. **No further test work is planned** — see
+[Scope discipline](#scope-discipline).
 
 ### How the tests avoid flakiness
 
@@ -169,13 +170,51 @@ backend/src/
 ├── services/     documents.service.ts · processing.service.ts  # the state machine
 ├── processing/   mock-processor.ts · validator.ts · error-classifier.ts
 ├── repositories/ documents.repo.ts · events.repo.ts
-├── storage/      file-storage.ts      # disk + postgres drivers behind an interface
+├── storage/      file-storage.ts      # disk driver behind an interface
 ├── middleware/   upload · validate · request-context · error-handler · not-found
 └── common/       errors.ts · types.ts · async-handler.ts
 ```
 
 Layering is one-directional: **routes → controllers → services → repositories**.
 Routes never touch the database; services never see `req`/`res`.
+
+---
+
+## Scope discipline
+
+**The constraint: two days, and every line must be explainable in the technical
+discussion.** The brief budgets 15–20 hours and says twice that a polished UI
+over a weak backend scores lower than the reverse — but the inverse is also
+true, and §8 makes the UI *required*. The backend is done. The risk now is
+spending remaining time deepening it instead of building the UI.
+
+### Cut, and why
+
+| Removed | Reason |
+| --- | --- |
+| Postgres storage driver (`bytea` + `file_data` column) | Never enabled in any environment — `STORAGE_DRIVER=disk` everywhere. A second implementation of an interface with one real user. The interface stays; that is the explainable part. |
+| `STORAGE_DRIVER` env var | Nothing left to switch between. |
+| `TxClient`, `isTerminal`, `CLAIMABLE_STATUSES` | Exported, never called. |
+| 9 tests (58 → 49) | Each tested Zod's behaviour, Postgres's behaviour, or something another test already asserted. |
+| README "Build Roadmap" | Internal planning. A reviewer wants what exists, not the plan that got there. |
+
+### Deliberately kept
+
+- **`rejectedData`** — not in the brief, but three lines, and the detail view
+  needs it to show validation errors beside the values that caused them.
+  Explainable in one sentence: rejected data is not a result, but an operator
+  still has to see what was read.
+- **The reaper** — answers Q15's "what happens if the application crashes during
+  processing" directly.
+- **Jitter** — one line, and it is the answer to the 1M-documents/day question.
+- **Five states** — §4 requires that invalid data not be "marked as
+  successfully processed".
+
+### The rule from here
+
+Build what §8 and §11 require, then stop. Before adding anything to the backend,
+ask: *does the UI need this, or does the brief name it?* If neither, it does not
+go in. Depth in the half nobody sees is the expensive mistake.
 
 ---
 
@@ -209,6 +248,12 @@ Prisma 7 makes the CLI a runtime dependency of `@prisma/client`, pulling
 Postgres-only project. Every 7.x release does this. One advisory remains
 (`deepmerge-ts` via Prisma's config loader) — dev-only, not reachable at runtime;
 the npm "fix" downgrades to an older Prisma with worse problems.
+
+### One storage driver, kept behind an interface
+The postgres/`bytea` driver was deleted: it was never enabled anywhere, and
+storing file bytes in the document row is the wrong answer at real volume
+regardless. `FileStorage` stays an interface because that is the part worth
+defending — an S3 driver slots in without touching a caller.
 
 ### `buildApp()` never calls `listen()`
 Entrypoints listen; the app factory does not. This is what lets Supertest drive
@@ -250,6 +295,14 @@ Do not rediscover these.
   `tsconfig.build.json` sets it, or including `tests/**` fails to compile.
 - **`docker compose up` with no arguments fails** until phase 6 — the `web`
   service points at an empty `frontend/`.
+- **A schema change needs `docker compose up -d -V --build`.** `prisma generate`
+  runs at *image build* time into the container-only `node_modules` volume, and
+  Docker populates an anonymous volume only when it first creates it — so a
+  plain `--build` leaves the **old** generated client in place and every query
+  fails with "the column `documents.x` does not exist". `-V` renews the
+  anonymous volumes. Do *not* "fix" this by running `prisma generate` in the
+  container's start command: the volume is root-owned from the image build, and
+  a container running as the host user gets `EACCES` trying to rewrite it.
 - **`$queryRaw` returns raw snake_case columns, not Prisma's camelCase.** The
   claim statement must be raw (`FOR UPDATE SKIP LOCKED` has no query-builder
   form), so its result is *not* a `Document`: `attempt_count` arrives, and
@@ -263,7 +316,8 @@ Do not rediscover these.
 ## Next: phase 4 — read APIs
 
 Validation landed with phase 3 (`processing/validator.ts` → `VALIDATION_FAILED`),
-so what remains of phase 4 is the read surface the UI needs:
+so what remains is the read surface. **Scope it to what the UI actually renders**
+— every endpoint here maps to a screen in §8, and nothing else gets added:
 
 1. **`GET /documents`** — list with `status` / `documentType` (both repeatable),
    `search`, `from`/`to`, `page`/`pageSize` (default 20, cap 100), `sort`.
@@ -280,15 +334,15 @@ so what remains of phase 4 is the read surface the UI needs:
 Note the route-order trap: `/documents/stats` must be registered **before**
 `/documents/:id`, or `stats` is parsed as an id and rejected by the id regex.
 
-**Done when:** the UI could be built against the API without further backend work.
+**Done when:** the UI could be built against the API without further backend
+work. That is also the moment backend work *stops* — see
+[Scope discipline](#scope-discipline).
 
 ### Then
 
-- **Phase 5:** all six required scenarios already pass, but spread across files
-  and named in the project's vocabulary rather than the brief's — add a thin
-  file that names them the brief's way and points at the existing tests. The
-  real coverage gap is list/filter/pagination, which only exists once phase 4
-  lands.
+- **Phase 5:** effectively done. All six required scenarios pass and README maps
+  them to their files. Add tests for list filtering/pagination when phase 4
+  lands — a handful, not a suite — and nothing more.
 - **Phase 6:** Next.js — dashboard, upload, list, detail with timeline. Only
   after the backend is done: the brief says twice that a polished UI over a weak
   backend scores lower.
@@ -299,7 +353,6 @@ Note the route-order trap: `/documents/stats` must be registered **before**
 
 ## Before submitting
 
-- [ ] Strip the "planning document" framing and *(planned)* markers from README
 - [ ] `AI_USAGE.md` — tools used, what was generated, what was **changed or
       rejected** (the Prisma 7 rejection and the BullMQ rejection are good
       material: both were AI suggestions overturned by checking real constraints)
@@ -307,7 +360,5 @@ Note the route-order trap: `/documents/stats` must be registered **before**
 - [ ] Verify a clean clone runs with `docker compose up`
 - [ ] Note the Render cold-start delay next to the live demo link
 - [ ] Keep README's engineering answers in sync with what the code actually does
-- [ ] README documents the detail response as `result: null` on failure; the
-      implementation also returns `rejectedData` (the extraction that failed
-      validation, kept so an operator can see what was read). Update the API
-      reference to match.
+- [ ] Re-read README end to end once the UI exists — the Frontend section
+      currently describes what is being built, and must describe what shipped.

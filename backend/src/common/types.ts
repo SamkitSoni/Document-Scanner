@@ -9,16 +9,6 @@ export const TERMINAL_STATUSES = [
   'FAILED',
 ] as const satisfies readonly DocumentStatus[];
 
-/** Statuses a worker may claim from. */
-export const CLAIMABLE_STATUSES = [
-  'UPLOADED',
-  'RETRY_PENDING',
-] as const satisfies readonly DocumentStatus[];
-
-export function isTerminal(status: DocumentStatus): boolean {
-  return (TERMINAL_STATUSES as readonly DocumentStatus[]).includes(status);
-}
-
 /** Fields the mock processor is expected to extract. */
 export interface ExtractedData {
   companyName: string;

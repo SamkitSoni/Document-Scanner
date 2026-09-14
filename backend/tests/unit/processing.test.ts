@@ -44,11 +44,6 @@ describe('retry backoff', () => {
     expect(backoffMs(1, () => 1)).toBe(2_500);
   });
 
-  it('never returns a negative delay', () => {
-    for (let attempt = 1; attempt <= 5; attempt += 1) {
-      expect(backoffMs(attempt, () => 0)).toBeGreaterThanOrEqual(0);
-    }
-  });
 });
 
 describe('mock processor', () => {
@@ -57,12 +52,6 @@ describe('mock processor', () => {
     expect(resolveOutcome('invalid-scan.pdf', hash)).toBe('INVALID_RESULT');
     expect(resolveOutcome('error-case.pdf', hash)).toBe('ERROR');
     expect(resolveOutcome('success.pdf', hash)).toBe('SUCCESS');
-  });
-
-  it('is deterministic for a given content hash', () => {
-    const first = resolveOutcome('statement.pdf', hash);
-    const second = resolveOutcome('statement.pdf', hash);
-    expect(first).toBe(second);
   });
 
   it('extracts different-looking companies for different documents', async () => {

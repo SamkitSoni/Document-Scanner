@@ -6,8 +6,8 @@ the extracted data and the full processing history through a web UI.
 
 Built for the SuretySeven SDE-1 take-home assignment.
 
-> **Status:** planning document. This README describes the target design and the
-> build roadmap. Sections marked _(planned)_ are not yet implemented.
+> **Status:** backend complete (upload, async processing, validation, retries,
+> crash recovery) with 49 tests. The web UI is in progress.
 
 ---
 
@@ -25,7 +25,6 @@ Built for the SuretySeven SDE-1 take-home assignment.
 - [Testing Strategy](#testing-strategy)
 - [Running Locally](#running-locally)
 - [Deployment](#deployment)
-- [Build Roadmap](#build-roadmap)
 - [Engineering Questions](#engineering-questions)
 - [Limitations](#limitations)
 
@@ -75,7 +74,7 @@ exactly what happened to a document — including failed attempts and retries.
 | Frontend | Next.js 15 (App Router) | File-based routing, server components for initial loads, first-class Vercel deployment |
 | UI | Tailwind CSS + shadcn/ui | Accessible primitives, professional look without hand-rolling components |
 | Data fetching | TanStack Query | Cache management and conditional polling while documents are in flight |
-| Testing | Vitest + Supertest + Playwright | Fast runner, HTTP-level integration tests, one browser E2E path |
+| Testing | Vitest + Supertest | Fast runner; integration tests drive the real HTTP stack and database |
 | Local orchestration | Docker Compose | Single-command startup as the assignment suggests |
 
 Everything above is open source and free. See [Deployment](#deployment) for the
@@ -142,8 +141,7 @@ process. They share domain services, the Prisma client, and the queue definition
                                      │ read bytes
                        ┌─────────────▼──────────────┐
                        │  File Storage              │
-                       │  local disk (dev)          │
-                       │  Postgres bytea (deployed) │
+                       │  local disk                │
                        │  S3/R2-ready interface     │
                        └────────────────────────────┘
 ```
@@ -536,9 +534,22 @@ When processing fails, `result` is `null` and the failure is described:
     { "field": "registrationNumber", "rule": "required", "message": "Registration number is missing." },
     { "field": "annualRevenue", "rule": "min", "message": "Annual revenue cannot be negative." }
   ],
-  "result": null
+  "result": null,
+  "rejectedData": {
+    "companyName": "ABC Construction Pvt Ltd",
+    "registrationNumber": "",
+    "annualRevenue": -12500000,
+    "documentDate": "2026-08-15"
+  }
 }
 ```
+
+`result` and `rejectedData` are deliberately separate. `result` means data the
+system accepted, so it is `null` whenever validation failed and nothing
+downstream can mistake rejected data for usable output. But the extraction is
+still worth seeing — "what did we actually read?" is the first question when
+triaging a validation failure — so it is returned under its own key, and the
+detail view renders it beside the errors that rejected it.
 
 ### `GET /documents`
 
@@ -585,6 +596,9 @@ When processing fails, `result` is `null` and the failure is described:
 ---
 
 ## Frontend
+
+> **In progress.** The backend is complete; this section describes the UI being
+> built against it.
 
 Next.js App Router. All filter state lives in URL query parameters, so any view
 is shareable and survives a refresh.
@@ -652,41 +666,49 @@ for `metadata` and `extractedData` paths as a second line of defence.
 
 ## Testing Strategy
 
-Run with `npm test`. Integration tests use a disposable Postgres via Testcontainers,
-falling back to a `TEST_DATABASE_URL` when Docker is unavailable.
+Run with `npm test`. **49 tests**, integration over unit wherever a route
+exists — a test that drives the real HTTP stack and the real database catches
+wiring bugs that a mocked unit test cannot.
 
 ### Required scenarios (assignment section 13)
 
-| # | Scenario | Assertion |
-| --- | --- | --- |
-| 1 | Valid document upload | `201`, `status: UPLOADED`, row persisted, `UPLOADED` event written |
-| 2 | Invalid extracted data | Terminal `VALIDATION_FAILED`, `validationErrors` populated, **no retry attempted** |
-| 3 | Successful processing | `PROCESSED` with complete `extractedData`, events in correct order |
-| 4 | Processor failure | All 3 attempts exhausted → terminal `FAILED`, `attemptCount: 3`, three failure events |
-| 5 | Failure then successful retry | Attempt 1 `TIMEOUT`, attempt 2 succeeds → `PROCESSED`; history shows both |
-| 6 | Same document twice | Second upload returns the first `documentId`, one row, one event chain |
+All six are covered. Their `describe` blocks are named to match this table.
 
-### Additional coverage
+| # | Scenario | Where | Assertion |
+| --- | --- | --- | --- |
+| 1 | Valid document upload | `upload.test.ts` | `201`, `status: UPLOADED`, row persisted, `UPLOADED` event written |
+| 2 | Invalid extracted data | `processing.test.ts` | Terminal `VALIDATION_FAILED`, `validationErrors` populated, **no retry attempted** |
+| 3 | Successful processing | `processing.test.ts` | `PROCESSED` with complete `extractedData`, events in correct order |
+| 4 | Processor failure | `processing.test.ts` | All 3 attempts exhausted → terminal `FAILED`, `attemptCount: 3` |
+| 5 | Failure then successful retry | `processing.test.ts` | Attempt 1 `TIMEOUT`, attempt 2 succeeds → `PROCESSED`; history shows both |
+| 6 | Same document twice | `upload.test.ts` | Second upload returns the first `documentId`, one row, one event chain |
 
-**Unit** — each validation rule including boundaries (`annualRevenue: 0` passes,
-`-1` fails; malformed and future dates); the error classifier's retry decisions;
-content hashing stability.
+### The rest
 
 **Integration** — non-PDF rejected by magic bytes despite a spoofed
-`Content-Type`; oversize upload returns `413`; unknown ID returns `404`; filter
-combinations and pagination boundaries; manual retry rejected on a `PROCESSED`
-document.
+`Content-Type`; malformed metadata and unknown document types rejected; unknown
+id returns `404`; concurrent uploads of identical bytes resolve to one document;
+two workers never claim the same row; a document abandoned in `PROCESSING` is
+reclaimed once its lease expires.
 
-**E2E (Playwright)** — one happy path: upload, appear in list, reach `PROCESSED`,
-detail view shows the extracted fields.
+**Unit** — each validation rule including its boundary (`annualRevenue: 0`
+passes, `-1` fails; a date that matches the pattern but is not a real calendar
+date); the classifier's retry decisions; backoff growth and its jitter window.
+
+A bug this suite caught, as evidence it earns its keep: the claim query is raw
+SQL, so it returns snake_case columns rather than Prisma's camelCase mapping.
+`attemptCount` read as `undefined`, and since `undefined < 3` is false, every
+document went terminal on its first attempt. Typecheck passed and the API
+returned `200`s — only an assertion on `attemptCount` after a retry exposed it.
 
 ### Determinism
 
-Tests drive the processor through `MOCK_PROCESSOR_MODE` or filename hints, never
-through real randomness. The worker's job handler is exported as a plain function
-so tests can invoke it directly and step the state machine without waiting on
-queue timing; one separate test exercises a real claim-process-complete round
-trip through the database so the queue wiring itself is covered.
+No test depends on chance. The processor resolves its outcome from
+`MOCK_PROCESSOR_MODE`, then a filename hint, then a draw seeded by the content
+hash — so a given file always behaves the same way. Tests call the state machine
+directly rather than starting the worker's poll loop, since the loop only calls
+it on a timer and waiting on real timers would be slow and flaky; retry tests
+make the document due immediately instead of sleeping through the backoff.
 
 ---
 
@@ -736,8 +758,7 @@ npm run dev        # UI on :3000
 | --- | --- | --- |
 | `DATABASE_URL` | — | Postgres connection string |
 | `PORT` | `4000` | API port |
-| `STORAGE_DRIVER` | `disk` | `disk` or `postgres` |
-| `STORAGE_PATH` | `./uploads` | Disk driver location |
+| `STORAGE_PATH` | `./uploads` | Where uploaded files are written |
 | `MAX_UPLOAD_BYTES` | `10485760` | Upload size cap |
 | `MAX_PROCESSING_ATTEMPTS` | `3` | Automatic retry budget |
 | `WORKER_POLL_INTERVAL_MS` | `1000` | Queue poll interval |
@@ -795,10 +816,11 @@ worker deploys separately and scales independently of API traffic.
 
 ### Deployed-environment adjustments
 
-- `STORAGE_DRIVER=postgres` — Render's filesystem is ephemeral, so uploaded bytes
-  are stored as `bytea` rather than on disk. The storage interface makes this a
-  configuration change; swapping in S3 or Cloudflare R2 would be a third
-  implementation of the same interface.
+- **Uploaded files need durable storage.** A deployed container's filesystem is
+  ephemeral, so files written to disk do not survive a redeploy. `FileStorage`
+  is an interface for exactly this reason: an S3 or Cloudflare R2 driver is a
+  second implementation and no change to any caller. Only the disk driver is
+  built, since it is what local development and the demo need.
 - `WORKER_POLL_INTERVAL_MS` is raised in the deployed configuration, since Neon
   bills compute time and there is no benefit to polling an idle queue aggressively.
 - Cold starts mean the first request after idle takes about a minute. The
@@ -811,84 +833,6 @@ scenario the design already handles: the job is a database row, not memory, so a
 document caught in `PROCESSING` when the service sleeps is reclaimed by the
 stale-job reaper on the next wake and processed normally. The worst outcome is
 delay, never a lost document.
-
----
-
-## Build Roadmap
-
-Sequenced so that the backend is complete and tested before any UI work begins —
-the brief states twice that a polished UI over an unreliable backend scores lower
-than the reverse.
-
-### Phase 1 — Foundation (~2h)
-
-- Monorepo layout, TypeScript config, ESLint and Prettier
-- `docker-compose.yml`: postgres, api, worker, web
-- Prisma schema, initial migration, seed script
-- `buildApp()`, health endpoint, env parsing, pino setup
-- **Done when:** `docker compose up` yields a green `/api/health` reporting both
-  database reachability
-
-### Phase 2 — Upload and persistence (~3h)
-
-- Multer configuration, magic-byte verification, size limits
-- SHA-256 hashing, storage interface with the disk driver
-- `POST /documents` through the full route → controller → service → repository path
-- Duplicate detection with the idempotent `200` response
-- Event writing inside the same transaction as the document write
-- Error hierarchy and the terminal error handler
-- **Done when:** upload persists a document and an `UPLOADED` event; a second
-  upload of the same file returns the original ID
-
-### Phase 3 — Async processing and retries (~3h)
-
-- `JobQueue` interface, Postgres implementation, worker entrypoint with polling loop
-- Mock processor with hash seeding, filename hints, and mode override
-- State machine: `PROCESSING` → terminal, each transition writing an event
-- Error classifier; retry with exponential backoff and jitter
-- Stale-job reaper on a schedule
-- Graceful shutdown on `SIGTERM` for both processes
-- **Done when:** a document moves through the full lifecycle unattended, and a
-  worker killed mid-processing has its document reclaimed and completed
-
-### Phase 4 — Validation and read APIs (~2h)
-
-- Zod validator over extracted fields; `VALIDATION_FAILED` path with structured errors
-- `GET /documents/:id`, `/history`, `/stats`, `/file`
-- List endpoint: filtering, search, date range, sorting, pagination
-- `POST /documents/:id/retry`
-- **Done when:** every endpoint in the API reference responds correctly, including
-  failure shapes
-
-### Phase 5 — Testing (~3h)
-
-- Test harness: Testcontainers, fixtures, `waitForStatus` helper
-- All six required scenarios
-- Unit coverage for the validator and classifier
-- Edge cases: spoofed content type, oversize, unknown ID, invalid transitions
-- **Done when:** `npm test` is green and every required scenario is explicitly named
-
-### Phase 6 — Frontend (~4h)
-
-- Next.js scaffold, Tailwind, shadcn/ui, typed API client from shared types
-- Upload page with drag-and-drop and all result states
-- List page with filters in URL state, pagination, skeletons, empty state
-- Detail page: info, extracted fields, validation errors, timeline, PDF preview, retry
-- Dashboard with status counts
-- Conditional polling, toasts, responsive layout, accessibility pass
-- **Done when:** every backend capability is reachable from the UI and no raw
-  error text is ever rendered
-
-### Phase 7 — Deployment and documentation (~2h)
-
-- Neon, Render, Vercel setup; environment configuration
-- `docs/architecture.png` exported from the diagram
-- README completion: engineering answers, limitations, live demo link
-- `AI_USAGE.md`
-- **Done when:** a fresh clone runs with `docker compose up`, and the deployed
-  demo completes an upload end to end
-
-**Total: ~19 hours**, within the 15–20 hour expectation.
 
 ---
 
@@ -1030,9 +974,10 @@ pretending it is not.
    the poll interval rather than pushed, and queue traffic competes with
    application queries for the same connection pool. Both are fine at this scale
    and neither would survive a high-throughput workload.
-7. **File storage is not production-grade.** Disk locally, `bytea` when deployed.
-   Object storage is the right answer; the interface is there but the S3 driver
-   is not written.
+7. **File storage is not production-grade.** Files are written to local disk,
+   which does not survive a container redeploy. Object storage is the right
+   answer; `FileStorage` is an interface so an S3 driver slots in, but it is
+   not written.
 8. **No rate limiting or abuse protection.** A client can upload without bound.
 9. **Retry budgets are global, not per-error-class.** A more refined policy would
    give timeouts a longer budget than internal errors, and would add a circuit

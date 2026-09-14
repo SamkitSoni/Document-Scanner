@@ -11,7 +11,6 @@ export interface CreateDocumentInput {
   contentHash: string;
   storageKey: string;
   metadata: Prisma.InputJsonValue;
-  fileData?: Uint8Array;
 }
 
 export interface ListFilters {
@@ -35,14 +34,9 @@ export interface ListOptions extends ListFilters {
  */
 export async function createWithEvent(input: CreateDocumentInput): Promise<Document> {
   return prisma.$transaction(async (tx) => {
-    const { fileData, ...rest } = input;
-
     const document = await tx.document.create({
       data: {
-        ...rest,
-        // Prisma's Bytes maps to Uint8Array; a Buffer is one, but the generic
-        // parameter differs, so it is normalised here at the boundary.
-        ...(fileData ? { fileData: new Uint8Array(fileData) } : {}),
+        ...input,
         status: 'UPLOADED',
         // Claimable immediately; the worker picks it up on its next poll.
         nextAttemptAt: new Date(),

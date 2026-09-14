@@ -13,7 +13,6 @@ async function main(): Promise<void> {
       {
         port: env.PORT,
         env: env.NODE_ENV,
-        storageDriver: env.STORAGE_DRIVER,
         workerInProcess: env.RUN_WORKER_IN_PROCESS,
       },
       'api listening',
