@@ -1,27 +1,46 @@
+# ---- Dependencies ----
 node_modules/
+
+# ---- Build output ----
 dist/
 build/
 .next/
 out/
-coverage/
 *.tsbuildinfo
+next-env.d.ts.bak
 
-.env
-.env.local
-.env.*.local
-
-uploads/
-*.log
-npm-debug.log*
-
-.DS_Store
-.vscode/*
-!.vscode/extensions.json
-.idea/
-
+# ---- Test / coverage output ----
+coverage/
 /test-results/
 /playwright-report/
 /blob-report/
 
-# Local dev database credentials
+# ---- Environment ----
+# .env.example is committed; real credentials never are.
+.env
+.env.local
+.env.*.local
 backend/.env
+frontend/.env
+
+# ---- Runtime artefacts ----
+# Uploaded PDFs live on a volume (Docker) or here (host mode); neither belongs in git.
+uploads/
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ---- Deployment tooling ----
+.vercel/
+.turbo/
+
+# ---- Editor / OS ----
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# ---- Not part of the submission ----
+# The assignment brief itself — the repo is the answer, not a copy of the question.
+SuretySeven_SDE1_Take_Home_Assignment.pdf

@@ -1,19 +1,27 @@
+import type { IconName } from '@/components/Icon';
 import type { DocumentStatus, DocumentType } from './types';
 
 /**
  * How each status is presented — one mapping, used by the table, the dashboard
- * tiles and the timeline. Keeping it here is what stops the same status being
- * amber in one place and grey in another.
+ * tiles, the badges and the timeline. Keeping it here is what stops the same
+ * status being amber in one place and grey in another.
  *
- * `tone` classes are written out in full because Tailwind scans source text for
- * class names; a template-built class would be stripped from the CSS bundle.
+ * Colours are semantic tokens (`success`, `warning`, `danger`, …) rather than
+ * palette names, so the theme is defined once in `globals.css` and a status's
+ * colour is changed in exactly one place. Classes are written out in full
+ * because Tailwind scans source text for class names; a template-built class
+ * would be stripped from the CSS bundle.
  */
 export interface StatusPresentation {
   label: string;
-  /** Badge colours. */
+  /** Badge colours: wash background, coloured text, matching hairline ring. */
   tone: string;
-  /** Dot/marker colour, for the timeline and tiles. */
-  dot: string;
+  /** Solid fill, for the timeline marker and the tile accent. */
+  solid: string;
+  /** Text-only colour, for figures and inline emphasis. */
+  text: string;
+  /** The glyph carried alongside the label — shape as well as colour. */
+  icon: IconName;
   /** What this status means, in an operator's terms. */
   hint: string;
 }
@@ -21,39 +29,51 @@ export interface StatusPresentation {
 export const STATUS_PRESENTATION: Record<DocumentStatus, StatusPresentation> = {
   UPLOADED: {
     label: 'Uploaded',
-    tone: 'bg-slate-100 text-slate-700 ring-slate-600/20 dark:bg-slate-400/10 dark:text-slate-300 dark:ring-slate-400/30',
-    dot: 'bg-slate-400',
-    hint: 'Waiting to be picked up by a worker.',
+    tone: 'bg-neutral-wash text-neutral ring-neutral/20',
+    solid: 'bg-neutral text-white',
+    text: 'text-neutral',
+    icon: 'inbox',
+    hint: 'Waiting to be processed.',
   },
   RETRY_PENDING: {
     label: 'Retry pending',
-    tone: 'bg-amber-100 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-300 dark:ring-amber-400/30',
-    dot: 'bg-amber-500',
-    hint: 'A previous attempt failed; another is scheduled.',
+    tone: 'bg-warning-wash text-warning ring-warning/25',
+    solid: 'bg-warning text-white',
+    text: 'text-warning',
+    icon: 'retry',
+    hint: 'A previous attempt did not work. We will try again shortly.',
   },
   PROCESSING: {
     label: 'Processing',
-    tone: 'bg-blue-100 text-blue-800 ring-blue-600/20 dark:bg-blue-400/10 dark:text-blue-300 dark:ring-blue-400/30',
-    dot: 'bg-blue-500',
-    hint: 'A worker is extracting data right now.',
+    tone: 'bg-info-wash text-info ring-info/25',
+    solid: 'bg-info text-white',
+    text: 'text-info',
+    icon: 'spinner',
+    hint: 'We are reading this document right now.',
   },
   PROCESSED: {
     label: 'Processed',
-    tone: 'bg-emerald-100 text-emerald-800 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-400/30',
-    dot: 'bg-emerald-500',
-    hint: 'Extracted and validated successfully.',
+    tone: 'bg-success-wash text-success ring-success/25',
+    solid: 'bg-success text-white',
+    text: 'text-success',
+    icon: 'check',
+    hint: 'Read and checked successfully.',
   },
   VALIDATION_FAILED: {
     label: 'Validation failed',
-    tone: 'bg-orange-100 text-orange-800 ring-orange-600/20 dark:bg-orange-400/10 dark:text-orange-300 dark:ring-orange-400/30',
-    dot: 'bg-orange-500',
-    hint: 'The document was read, but its contents did not pass the rules.',
+    tone: 'bg-warning-wash text-warning ring-warning/25',
+    solid: 'bg-warning text-white',
+    text: 'text-warning',
+    icon: 'warning',
+    hint: 'We read this document, but some information did not pass our checks.',
   },
   FAILED: {
     label: 'Failed',
-    tone: 'bg-red-100 text-red-800 ring-red-600/20 dark:bg-red-400/10 dark:text-red-300 dark:ring-red-400/30',
-    dot: 'bg-red-500',
-    hint: 'Processing could not complete after all attempts.',
+    tone: 'bg-danger-wash text-danger ring-danger/25',
+    solid: 'bg-danger text-white',
+    text: 'text-danger',
+    icon: 'alert',
+    hint: 'We could not finish processing this document.',
   },
 };
 
@@ -71,24 +91,6 @@ const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
 
 export function documentTypeLabel(type: DocumentType | string): string {
   return DOCUMENT_TYPE_LABELS[type as DocumentType] ?? String(type);
-}
-
-/**
- * Failure codes are stable identifiers, not prose. The UI is where they become
- * a sentence a user can act on; the raw code is still shown alongside so it can
- * be matched against the logs.
- */
-const FAILURE_REASON_LABELS: Record<string, string> = {
-  PROCESSOR_TIMEOUT: 'The processor timed out while reading this document.',
-  PROCESSOR_ERROR: 'The processor hit an internal error reading this document.',
-  EXTRACTED_DATA_INVALID: 'The data read from this document did not pass validation.',
-  ATTEMPTS_EXHAUSTED: 'Every automatic attempt failed. A manual retry is available.',
-  LEASE_EXPIRED: 'A worker stopped unexpectedly mid-attempt and the document was reclaimed.',
-};
-
-export function failureReasonLabel(reason: string | null): string | null {
-  if (!reason) return null;
-  return FAILURE_REASON_LABELS[reason] ?? 'Processing did not complete.';
 }
 
 /** Extracted field keys are camelCase; an operator should see words. */
@@ -156,13 +158,13 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+/** Hours and minutes only: seconds are noise in a lifecycle read by a human. */
 export function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
   });
 }
 

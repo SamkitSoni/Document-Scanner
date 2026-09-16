@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { Icon, type IconName } from '@/components/Icon';
 
 type ToastTone = 'success' | 'error' | 'info';
 
@@ -46,9 +47,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={toast.id}
             role="status"
-            className={`pointer-events-auto animate-slide-in rounded-lg border px-4 py-3 text-sm shadow-lg ${TONE_CLASSES[toast.tone]}`}
+            className={`pointer-events-auto flex animate-slide-in items-start gap-2.5 rounded-xl border px-4 py-3 text-sm shadow-lg ${TONE_CLASSES[toast.tone]}`}
           >
-            {toast.message}
+            <Icon name={TONE_ICONS[toast.tone]} size={16} className="mt-0.5" />
+            <span className="text-ink-2">{toast.message}</span>
           </div>
         ))}
       </div>
@@ -56,12 +58,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/* Toast surfaces stay opaque (`bg-surface` behind the wash) so a message is
+   readable over whatever it lands on top of. */
 const TONE_CLASSES: Record<ToastTone, string> = {
-  success:
-    'border-emerald-600/20 bg-emerald-50 text-emerald-900 dark:border-emerald-400/30 dark:bg-emerald-950 dark:text-emerald-100',
-  error:
-    'border-red-600/20 bg-red-50 text-red-900 dark:border-red-400/30 dark:bg-red-950 dark:text-red-100',
-  info: 'border-line bg-surface text-ink',
+  success: 'border-success/25 bg-success-wash text-success',
+  error: 'border-danger/25 bg-danger-wash text-danger',
+  info: 'border-line bg-surface text-accent',
+};
+
+const TONE_ICONS: Record<ToastTone, IconName> = {
+  success: 'check',
+  error: 'alert',
+  info: 'clock',
 };
 
 export function useToast(): ToastContextValue {

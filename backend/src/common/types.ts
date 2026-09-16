@@ -12,13 +12,6 @@ export const DOCUMENT_STATUSES = [
   'FAILED',
 ] as const satisfies readonly DocumentStatus[];
 
-/** Statuses from which no further automatic transition occurs. */
-export const TERMINAL_STATUSES = [
-  'PROCESSED',
-  'VALIDATION_FAILED',
-  'FAILED',
-] as const satisfies readonly DocumentStatus[];
-
 /** Fields the mock processor is expected to extract. */
 export interface ExtractedData {
   companyName: string;

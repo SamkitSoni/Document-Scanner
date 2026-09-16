@@ -7,7 +7,7 @@ pipeline with asynchronous extraction, validation, and retries.
 engineering answers. **This file is the build log**: what exists, what is next,
 and the decisions worth not re-deriving.
 
-**Last updated:** end of phase 6 (frontend). Backend and UI complete.
+**Last updated:** phase 6.5 — UI visual overhaul, pinned light-only. Backend and UI complete.
 
 ---
 
@@ -21,6 +21,7 @@ and the decisions worth not re-deriving.
 | 4. Validation + read APIs | **Done** | 10 tests; all endpoints verified live |
 | 5. Testing | **Done enough** | all 6 required scenarios covered; see [Test inventory](#test-inventory) |
 | 6. Frontend | **Done** | 4 screens; verified in a real browser against the running stack |
+| 6.5 Visual polish | **Done** | token/icon/type system; re-verified in-browser, light + dark + mobile |
 | 7. Deployment + docs | **Docs done** | `AI_USAGE.md`, `docs/architecture.png`; deployment not performed |
 
 **60 tests passing, both typechecks clean.**
@@ -189,8 +190,10 @@ convention that a fix ships with the test that would have caught it.
 TypeScript · Express 5 · PostgreSQL 16 + Prisma 6 · Zod · pino · Vitest +
 Supertest · Next.js 15 + React 19 + Tailwind 3 · Docker Compose.
 
-Frontend deps are deliberately minimal: no data-fetching, state or component
-library. Everything in the stack is actually installed — checked, after npm
+Frontend deps are deliberately minimal: no data-fetching, state, component or
+**icon** library — the icon set is ~20 hand-drawn inline SVGs in
+`components/Icon.tsx`. Fonts (Inter + JetBrains Mono) come from `next/font`,
+which is part of Next and self-hosts them at build time. Everything in the stack is actually installed — checked, after npm
 quietly resolved a TypeScript major I did not ask for.
 
 **No Redis, no BullMQ** — the queue is Postgres. See [Key decisions](#key-decisions).
@@ -423,6 +426,43 @@ Do not rediscover these.
 - **npm resolved `typescript@^7` from a bare `npm i -D typescript`.** Pinned to
   5.7.2 to match the backend. Worth checking resolved versions after any install
   rather than assuming the major.
+- **A correct error envelope is not the same as a readable one.** The handler
+  mapped every error properly and still shipped `Invalid enum value. Expected
+  'FINANCIAL_STATEMENT' | 'BANK_STATEMENT' | …` inside `details`, because Zod
+  writes those strings and nothing overrode them. Two rules came out of the
+  sweep: every schema names its own message, and **no message interpolates a
+  status or code** — `A document with status ${status} cannot be retried.` puts
+  a database constant in front of a user. Watch for the variant where the
+  fallback branch is merely *wrong*: lumping `PROCESSED` in with the in-flight
+  states told someone to "wait for it to finish" about a document that had
+  already succeeded.
+
+- **The timeline spun forever on a finished document.** The `Marker` animated
+  whenever `status === 'PROCESSING'`, but the timeline is an *append-only
+  history*: every processed document permanently contains a past `PROCESSING`
+  event, and a document that exhausted its retries contains three. So the
+  spinner never stopped, on documents that had finished minutes ago. Polling was
+  never the problem — `usePolledResource` stopped correctly. The fix is that
+  animation is a property of *the current step*, not of a status that appears in
+  a log: `Timeline` takes `live`, and only the last event animates, only while
+  the document is non-terminal. Worth remembering whenever a status-driven style
+  is applied to historical rows.
+
+- **Host mode and Docker mode are two separate datastores, and mixing them
+  looks like data loss.** Docker writes to the `postgres_data` and
+  `uploads_data` volumes; a host-side `npm run dev` writes to
+  `backend/uploads/` and the database in `backend/.env` (a *local* Postgres
+  over a Unix socket, also named `docpipeline`). Documents uploaded in one mode
+  never appear in the other. Two ways this bites:
+  `docker compose down -v` destroys the volumes, and `npm test` calls
+  `resetDatabase()` on whatever `backend/.env` names — so a host-side upload is
+  truncated by the next test run. Both leave the *files* behind with no row,
+  and a file with no row is invisible: the database is the source of truth and
+  nothing scans for orphans. Diagnose by comparing
+  `ls backend/uploads` against `SELECT id FROM documents` in each database.
+  **This project is run in Docker mode**; use plain `docker compose down`, and
+  keep `-v` for the deliberate clean-slate check.
+
 - **`$queryRaw` returns raw snake_case columns, not Prisma's camelCase.** The
   claim statement must be raw (`FOR UPDATE SKIP LOCKED` has no query-builder
   form), so its result is *not* a `Document`: `attempt_count` arrives, and
@@ -459,6 +499,19 @@ that already existed.
 - **`lib/display.ts` owns status presentation.** One mapping for the table, the
   tiles and the timeline. Colour is never the only signal: every badge carries a
   label, and timeline markers carry a glyph.
+- **Failure text is generic, and the code carries the detail.** The failure
+  notice says "Something went wrong" rather than naming the internal reason.
+  `ATTEMPTS_EXHAUSTED` had no entry in the old per-code mapping, so the most
+  common terminal failure fell through to a fallback that repeated the status
+  hint verbatim — the user was told the same non-fact twice. Rather than write a
+  sentence per code, the per-code mapping (`failureReasonLabel`) was deleted:
+  every branch had collapsed to the same generic line, and a lookup table whose
+  values are all identical is just a constant. The stable code is still shown,
+  labelled "If you contact support, quote this reference", so it stays
+  greppable against the logs without being presented as the explanation.
+  `VALIDATION_FAILED` keeps its specific wording — there the user *can* act on
+  it. The Timeline lost the sentence too: it printed the same line on every
+  retry row while the code beside it already carried the only varying detail.
 - **`ApiError` is the only thing rendered.** It holds the envelope's stable
   `code` plus a message we are willing to show; any 5xx becomes a generic string
   regardless of the body. §9 enforced structurally, mirroring the backend.
@@ -473,6 +526,78 @@ Everything else was additive, but the PDF preview forced a real fix:
 that returns `200` and renders nothing.
 
 ---
+
+## Phase 6.5 — the visual pass
+
+Presentation only. No route, endpoint, prop contract or data flow changed, and
+no backend file was touched; `npx tsc --noEmit` and `npm run build` both clean.
+
+### What changed, and why it is not just paint
+
+- **Tokens replace palette classes.** Status colours were `bg-emerald-100
+  dark:bg-emerald-400/10 …` written out at each call site. They are now semantic
+  tokens (`success`, `warning`, `danger`, `info`, `neutral`, each with a
+  `-wash`), defined once in `globals.css` and mapped in `tailwind.config.ts`.
+  The neutral ramp gained
+  `surface-2`, `line-strong` and `ink-2`, which is what lets a table header, a
+  card well and a hover row differ without inventing a colour each time.
+- **An icon set, not emoji.** The empty state was a `&#128196;` emoji (renders
+  differently per OS) and the timeline markers were text glyphs (`✓ ✕ ↻`).
+  Both are now `components/Icon.tsx` — one 24px grid, one stroke weight,
+  `aria-hidden` since every icon sits beside its own label.
+- **Real typography.** The UI was on the system font stack; it is now Inter with
+  JetBrains Mono for ids and failure codes, self-hosted via `next/font`.
+- **`Callout` unifies the banners.** The failure notice, the upload outcome and
+  the "still processing" note each wrote their own border/background/text triple.
+  One component now owns all three, which is the same argument as
+  `lib/display.ts` owning status presentation.
+- **Elevation and motion.** Three shadow tokens, and `card-interactive` for
+  panels that are actually clickable, so a link tile is distinguishable from a
+  static one before the cursor arrives.
+
+### Fixes found by looking at it
+
+- Nav wrapped into a ragged two-line block on a phone → brand row plus a
+  dedicated tab row below `sm`.
+- The list table's `Type`/`Status`/`Size`/`Uploaded` columns were unconstrained,
+  so the filename column collapsed and left a gulf mid-table → fixed widths on
+  the four, slack to `Document`.
+- `From`/`To` date inputs wrapped independently, stranding the Filters button
+  beside `To` → the pair is now one flex group that wraps as a unit.
+- The retry dialog's Escape handler was `onKeyDown` on a div, which only fires
+  when a child has focus → moved to a `window` listener in a `useEffect`.
+- `prefers-reduced-motion` reset durations but not transforms, so the card lift
+  still moved → transforms are now explicitly neutralised too.
+
+### Light-only, on purpose
+
+The dark token block was removed after the visual pass: the app now renders the
+light theme regardless of the OS setting. It is an operational tool shown to
+reviewers on machines whose theme we do not control, and one theme is one thing
+to verify rather than two.
+
+The token indirection is what made this a three-file change rather than a sweep
+— only two `dark:` strings existed in `src/`, both in comments, because no
+component had ever hard-coded a colour. Re-adding a theme later means defining
+the variables under a selector; no component would change.
+
+**`color-scheme: light` is the load-bearing line**, not decoration. Without it a
+dark-themed OS dark-shifts *native* controls — the two date inputs, the sort
+`<select>`, scrollbars — while our tokens stay light, so dark form controls sit
+on light cards. Verified by emulating `prefers-color-scheme: dark` in Chromium,
+which is the only way to see it: on a light-themed dev machine it looks fine
+either way.
+
+### Gotchas hit during it
+
+- **React 19 removed the global `JSX` namespace.** `Record<IconName, JSX.Element>`
+  fails with "Cannot find namespace 'JSX'"; use `ReactElement` from `react`.
+- **`absolute inset-0` inside a `<td>` is not row-scoped.** A stretched-link
+  overlay needs a positioned ancestor; a `<tr>` is not one by default, so it
+  stretched to the viewport. Removed rather than worked around — the filename
+  link was already the affordance.
+- **Tailwind has no `xs:` breakpoint by default.** `hidden xs:inline` silently
+  emits nothing rather than erroring.
 
 ## How the UI was verified
 
@@ -489,6 +614,14 @@ every screen was driven in headless Chromium against the running stack:
 
 Final run: **0 problems across 6 pages.** Worth re-running after any UI change —
 the script pattern is in the session notes, not committed.
+
+**Re-run after the 6.5 visual pass**, extended to screenshot all six pages in
+both colour schemes plus a 390px mobile pass: 0 console errors, 0 page errors,
+0 horizontal overflow. The only console entries are two `400`s on a deliberately
+malformed document id (`/documents/DOC-DOESNOTEXIST`), which is the id-format
+guard doing its job, not a regression. Screenshots are the point of the exercise:
+the column-width and date-wrapping bugs above were invisible in the DOM
+assertions and obvious in the image.
 
 ## Before submitting
 

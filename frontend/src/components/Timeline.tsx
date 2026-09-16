@@ -1,6 +1,7 @@
 'use client';
 
-import { STATUS_PRESENTATION, failureReasonLabel, formatTime, statusLabel } from '@/lib/display';
+import { Icon } from '@/components/Icon';
+import { STATUS_PRESENTATION, formatTime, statusLabel } from '@/lib/display';
 import type { DocumentStatus, HistoryEvent } from '@/lib/types';
 
 /**
@@ -12,51 +13,53 @@ import type { DocumentStatus, HistoryEvent } from '@/lib/types';
  * is append-only on the backend, so this is a faithful record, not a
  * reconstruction.
  */
-export function Timeline({ events }: { events: HistoryEvent[] }) {
+export function Timeline({ events, live = false }: { events: HistoryEvent[]; live?: boolean }) {
   if (events.length === 0) {
-    return <p className="text-sm text-muted">No processing events recorded yet.</p>;
+    return (
+      <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
+        No processing events recorded yet.
+      </p>
+    );
   }
 
   return (
-    <ol className="relative space-y-0">
+    <ol className="relative">
       {events.map((event, index) => {
         const last = index === events.length - 1;
-        const reason = failureReasonLabel(event.reason);
         // A MANUAL_RETRY event is written as UPLOADED with a reason; naming it
         // explicitly is what makes the retry visible in the story.
         const manual = event.reason === 'MANUAL_RETRY';
 
         return (
-          <li key={`${event.timestamp}-${index}`} className="relative flex gap-4 pb-6 last:pb-0">
-            {/* The connector, drawn between markers rather than under the last one. */}
+          <li key={`${event.timestamp}-${index}`} className="relative flex gap-3.5 pb-5 last:pb-0">
+            {/* The connector, drawn between markers rather than under the last. */}
             {!last && (
-              <span
-                aria-hidden
-                className="absolute left-[11px] top-6 h-full w-px bg-line"
-              />
+              <span aria-hidden className="absolute left-[13px] top-7 h-[calc(100%-1.75rem)] w-px bg-line" />
             )}
 
-            <Marker status={event.status} manual={manual} />
+            <Marker status={event.status} manual={manual} active={last && live} />
 
             <div className="min-w-0 flex-1 pt-0.5">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <p className="text-sm font-medium text-ink">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <p className="text-sm font-semibold text-ink">
                   {manual ? 'Manual retry requested' : statusLabel(event.status)}
                 </p>
-                {event.attempt !== null && (
-                  <span className="rounded bg-canvas px-1.5 py-0.5 text-xs text-muted">
-                    attempt {event.attempt}
-                  </span>
-                )}
-                <time dateTime={event.timestamp} className="text-xs tabular-nums text-muted">
+                <time
+                  dateTime={event.timestamp}
+                  className="ml-auto text-[11px] tabular-nums text-muted"
+                >
                   {formatTime(event.timestamp)}
                 </time>
               </div>
 
-              {reason && !manual && <p className="mt-1 text-sm text-muted">{reason}</p>}
+              {event.attempt !== null && (
+                <span className="mt-1.5 inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-muted ring-1 ring-inset ring-line">
+                  Attempt {event.attempt}
+                </span>
+              )}
 
               {event.reason && !manual && (
-                <p className="mt-0.5 font-mono text-xs text-muted/80">{event.reason}</p>
+                <p className="mt-1 font-mono text-[11px] text-muted">{event.reason}</p>
               )}
             </div>
           </li>
@@ -66,24 +69,36 @@ export function Timeline({ events }: { events: HistoryEvent[] }) {
   );
 }
 
-/** Shape carries meaning alongside colour: ✓ done, ✕ failed, ↻ retrying. */
-function Marker({ status, manual }: { status: DocumentStatus; manual: boolean }) {
+/**
+ * Shape carries meaning alongside colour, via the same icon as the badge.
+ *
+ * `active` is what stops a finished document spinning forever: the timeline is a
+ * historical log, so every processed document still contains a past PROCESSING
+ * event. Animating on status alone made that old entry spin for good. Only the
+ * last event, and only while the document is genuinely still in flight, moves.
+ */
+function Marker({
+  status,
+  manual,
+  active,
+}: {
+  status: DocumentStatus;
+  manual: boolean;
+  active: boolean;
+}) {
   const presentation = STATUS_PRESENTATION[status];
-
-  let glyph = '•';
-  if (manual) glyph = '↻';
-  else if (status === 'PROCESSED') glyph = '✓';
-  else if (status === 'FAILED' || status === 'VALIDATION_FAILED') glyph = '✕';
-  else if (status === 'RETRY_PENDING') glyph = '↻';
+  const processing = status === 'PROCESSING' && active;
 
   return (
     <span
       aria-hidden
-      className={`relative z-10 grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white ${presentation.dot} ${
-        status === 'PROCESSING' ? 'animate-pulse' : ''
-      }`}
+      className={`relative z-10 grid h-[27px] w-[27px] shrink-0 place-items-center rounded-full ring-4 ring-surface ${presentation.solid}`}
     >
-      {glyph}
+      <Icon
+        name={manual ? 'retry' : presentation.icon}
+        size={14}
+        className={processing ? 'animate-spin' : ''}
+      />
     </span>
   );
 }

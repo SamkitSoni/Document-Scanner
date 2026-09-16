@@ -4,7 +4,15 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useMemo } from 'react';
 import { Filters, type FilterValues } from '@/components/Filters';
-import { Card, EmptyState, ErrorState, SkeletonLine, StatusBadge } from '@/components/ui';
+import { Icon } from '@/components/Icon';
+import {
+  Card,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  SkeletonLine,
+  StatusBadge,
+} from '@/components/ui';
 import { buildListQuery, listDocuments } from '@/lib/api';
 import { documentTypeLabel, formatBytes, formatRelative } from '@/lib/display';
 import { isTerminal, type DocumentListResponse } from '@/lib/types';
@@ -85,36 +93,45 @@ function DocumentsView() {
     },
   );
 
+  const total = data?.pagination.totalItems;
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
-          <p className="mt-1 text-sm text-muted">
-            {data
-              ? `${data.pagination.totalItems} document${data.pagination.totalItems === 1 ? '' : 's'}`
-              : 'Loading…'}
-            {refreshing && <span className="ml-2 text-xs">refreshing…</span>}
-          </p>
-        </div>
-
-        <div>
-          <label htmlFor="sort" className="sr-only">
-            Sort by
-          </label>
-          <select
-            id="sort"
-            value={sort}
-            onChange={(event) => apply({ sort: event.target.value })}
-            className="field w-auto"
-          >
-            <option value="createdAt:desc">Newest first</option>
-            <option value="createdAt:asc">Oldest first</option>
-            <option value="filename:asc">Filename A–Z</option>
-            <option value="filename:desc">Filename Z–A</option>
-          </select>
-        </div>
-      </div>
+      <PageHeader
+        title="Documents"
+        description={
+          <span className="flex items-center gap-2">
+            {total === undefined
+              ? 'Loading…'
+              : `${total} document${total === 1 ? '' : 's'}`}
+            {refreshing && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+                <Icon name="spinner" size={12} className="animate-spin" />
+                refreshing
+              </span>
+            )}
+          </span>
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <label htmlFor="sort" className="sr-only">
+              Sort by
+            </label>
+            <Icon name="sort" size={15} className="text-muted" />
+            <select
+              id="sort"
+              value={sort}
+              onChange={(event) => apply({ sort: event.target.value })}
+              className="field w-auto"
+            >
+              <option value="createdAt:desc">Newest first</option>
+              <option value="createdAt:asc">Oldest first</option>
+              <option value="filename:asc">Filename A–Z</option>
+              <option value="filename:desc">Filename Z–A</option>
+            </select>
+          </div>
+        }
+      />
 
       <Filters
         values={filters}
@@ -131,18 +148,15 @@ function DocumentsView() {
       ) : !data || data.data.length === 0 ? (
         <Card>
           <EmptyState
-            title="No documents match"
-            description="Try clearing a filter, or upload a document to get started."
-            action={{ href: '/upload', label: 'Upload a document' }}
+            icon="search"
+            title="No documents found"
+            description="Try removing a filter, or upload a document to get started."
           />
         </Card>
       ) : (
         <>
           <DocumentTable data={data} />
-          <Pagination
-            pagination={data.pagination}
-            onPage={(next) => apply({ page: next })}
-          />
+          <Pagination pagination={data.pagination} onPage={(next) => apply({ page: next })} />
         </>
       )}
     </div>
@@ -158,38 +172,50 @@ function DocumentTable({ data }: { data: DocumentListResponse }) {
     <div className="card overflow-hidden">
       {/* Desktop */}
       <table className="hidden w-full text-left text-sm md:table">
-        <thead className="border-b border-line bg-canvas text-xs uppercase tracking-wide text-muted">
+        <thead className="border-b border-line-strong bg-surface-2 text-[11px] uppercase tracking-wider text-muted">
           <tr>
-            <th scope="col" className="px-4 py-3 font-medium">Document</th>
-            <th scope="col" className="px-4 py-3 font-medium">Type</th>
-            <th scope="col" className="px-4 py-3 font-medium">Status</th>
-            <th scope="col" className="px-4 py-3 font-medium">Size</th>
-            <th scope="col" className="px-4 py-3 font-medium">Uploaded</th>
+            <th scope="col" className="px-5 py-3 font-semibold">Document</th>
+            <th scope="col" className="w-44 px-4 py-3 font-semibold">Type</th>
+            <th scope="col" className="w-40 px-4 py-3 font-semibold">Status</th>
+            <th scope="col" className="w-24 px-4 py-3 text-right font-semibold">Size</th>
+            <th scope="col" className="w-36 px-5 py-3 text-right font-semibold">Uploaded</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line">
           {data.data.map((document) => (
-            <tr key={document.documentId} className="transition-colors hover:bg-canvas">
-              <td className="px-4 py-3">
-                <Link
-                  href={`/documents/${document.documentId}`}
-                  className="font-medium text-ink hover:text-accent hover:underline"
-                >
-                  {document.filename}
-                </Link>
-                <p className="font-mono text-xs text-muted">{document.documentId}</p>
+            <tr key={document.documentId} className="group transition-colors hover:bg-surface-2">
+              <td className="px-5 py-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    aria-hidden
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-surface-2 text-muted transition-colors group-hover:border-accent/30 group-hover:text-accent"
+                  >
+                    <Icon name="document" size={16} />
+                  </span>
+                  <div className="min-w-0">
+                    <Link
+                      href={`/documents/${document.documentId}`}
+                      className="block truncate font-medium text-ink transition-colors hover:text-accent"
+                    >
+                      {document.filename}
+                    </Link>
+                    <p className="mt-0.5 font-mono text-[11px] text-muted">
+                      {document.documentId}
+                    </p>
+                  </div>
+                </div>
               </td>
-              <td className="px-4 py-3 text-muted">{documentTypeLabel(document.documentType)}</td>
+              <td className="px-4 py-3 text-ink-2">{documentTypeLabel(document.documentType)}</td>
               <td className="px-4 py-3">
                 <StatusBadge status={document.status} size="sm" />
                 {document.attemptCount > 1 && (
-                  <p className="mt-1 text-xs text-muted">{document.attemptCount} attempts</p>
+                  <p className="mt-1 text-[11px] text-muted">{document.attemptCount} attempts</p>
                 )}
               </td>
-              <td className="px-4 py-3 tabular-nums text-muted">
+              <td className="px-4 py-3 text-right tabular-nums text-muted">
                 {formatBytes(document.sizeBytes)}
               </td>
-              <td className="px-4 py-3 text-muted">
+              <td className="px-5 py-3 text-right text-muted">
                 <time dateTime={document.createdAt}>{formatRelative(document.createdAt)}</time>
               </td>
             </tr>
@@ -203,7 +229,7 @@ function DocumentTable({ data }: { data: DocumentListResponse }) {
           <li key={document.documentId}>
             <Link
               href={`/documents/${document.documentId}`}
-              className="block space-y-2 px-4 py-3 transition-colors hover:bg-canvas"
+              className="block space-y-2.5 px-4 py-3.5 transition-colors hover:bg-surface-2"
             >
               <div className="flex items-start justify-between gap-3">
                 {/* Uploaded filenames are long and often unbroken, which has no
@@ -216,10 +242,13 @@ function DocumentTable({ data }: { data: DocumentListResponse }) {
                   <StatusBadge status={document.status} size="sm" />
                 </span>
               </div>
-              <p className="font-mono text-xs text-muted">{document.documentId}</p>
-              <p className="text-xs text-muted">
-                {documentTypeLabel(document.documentType)} &middot;{' '}
-                {formatBytes(document.sizeBytes)} &middot; {formatRelative(document.createdAt)}
+              <p className="font-mono text-[11px] text-muted">{document.documentId}</p>
+              <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+                <span>{documentTypeLabel(document.documentType)}</span>
+                <span aria-hidden>·</span>
+                <span className="tabular-nums">{formatBytes(document.sizeBytes)}</span>
+                <span aria-hidden>·</span>
+                <span>{formatRelative(document.createdAt)}</span>
               </p>
             </Link>
           </li>
@@ -248,29 +277,31 @@ function Pagination({
       className="flex flex-wrap items-center justify-between gap-3 text-sm"
     >
       <p className="text-muted">
-        Showing <span className="font-medium text-ink">{first}</span>–
-        <span className="font-medium text-ink">{last}</span> of{' '}
-        <span className="font-medium text-ink">{totalItems}</span>
+        Showing <span className="font-medium tabular-nums text-ink">{first}</span>–
+        <span className="font-medium tabular-nums text-ink">{last}</span> of{' '}
+        <span className="font-medium tabular-nums text-ink">{totalItems}</span>
       </p>
       <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={() => onPage(page - 1)}
           disabled={page <= 1}
-          className="btn-secondary"
+          className="btn-secondary btn-sm"
         >
+          <Icon name="chevron-left" size={14} />
           Previous
         </button>
-        <span className="text-muted">
+        <span className="px-1 text-xs tabular-nums text-muted">
           Page {page} of {totalPages}
         </span>
         <button
           type="button"
           onClick={() => onPage(page + 1)}
           disabled={page >= totalPages}
-          className="btn-secondary"
+          className="btn-secondary btn-sm"
         >
           Next
+          <Icon name="chevron-right" size={14} />
         </button>
       </div>
     </nav>
@@ -281,7 +312,8 @@ function TableSkeleton() {
   return (
     <div className="card divide-y divide-line">
       {[0, 1, 2, 3, 4, 5].map((row) => (
-        <div key={row} className="flex items-center gap-4 px-4 py-4">
+        <div key={row} className="flex items-center gap-4 px-5 py-4">
+          <SkeletonLine className="h-9 w-9 rounded-lg" />
           <div className="flex-1 space-y-2">
             <SkeletonLine className="h-4 w-1/3" />
             <SkeletonLine className="h-3 w-24" />

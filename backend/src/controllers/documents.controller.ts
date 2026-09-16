@@ -6,13 +6,15 @@ import { env } from '../config/env.js';
 import { validatedQuery } from '../middleware/validate.js';
 import * as documentsService from '../services/documents.service.js';
 
-const documentTypeSchema = z.enum([
-  'FINANCIAL_STATEMENT',
-  'BANK_STATEMENT',
-  'REGISTRATION_CERTIFICATE',
-  'TAX_RETURN',
-  'OTHER',
-]);
+/**
+ * Zod's default for a failed enum is "Invalid enum value. Expected 'A' | 'B' …",
+ * which names our internal constants at the user. Every message in this file is
+ * overridden for the same reason: these strings reach a person, not a log.
+ */
+const documentTypeSchema = z.enum(
+  ['FINANCIAL_STATEMENT', 'BANK_STATEMENT', 'REGISTRATION_CERTIFICATE', 'TAX_RETURN', 'OTHER'],
+  { errorMap: () => ({ message: 'Choose a document type from the list.' }) },
+);
 
 /**
  * Multipart fields arrive as strings, so metadata is parsed and shape-checked
@@ -26,12 +28,12 @@ const metadataSchema = z
     try {
       const parsed: unknown = JSON.parse(raw);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'metadata must be a JSON object' });
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Extra details must be a set of labels and values.' });
         return z.NEVER;
       }
       return parsed as Record<string, unknown>;
     } catch {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'metadata must be valid JSON' });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Extra details could not be read. Remove them and try again.' });
       return z.NEVER;
     }
   });
@@ -42,14 +44,14 @@ export const uploadBodySchema = z.object({
 });
 
 export const documentIdParamSchema = z.object({
-  id: z.string().regex(/^DOC-[0-9A-Z]{10}$/, 'Not a valid document id'),
+  id: z.string().regex(/^DOC-[0-9A-Z]{10}$/, 'That document link does not look right.'),
 });
 
 export async function upload(req: Request, res: Response): Promise<void> {
   const parsed = uploadBodySchema.safeParse(req.body);
   if (!parsed.success) {
     throw new ValidationError(
-      'The request contains invalid values.',
+      'Some details need fixing before we can continue.',
       parsed.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })),
     );
   }
@@ -67,7 +69,7 @@ export async function upload(req: Request, res: Response): Promise<void> {
 export async function getById(req: Request, res: Response): Promise<void> {
   const id = req.params.id as string;
   const document = await documentsService.getDocument(id);
-  if (!document) throw new NotFoundError('Document');
+  if (!document) throw new NotFoundError('That document');
 
   res.json(toDetailResponse(document));
 }
@@ -109,11 +111,15 @@ const repeatable = <T extends z.ZodTypeAny>(schema: T) =>
     return (Array.isArray(v) ? v : [v]) as z.infer<T>[];
   });
 
-const statusSchema = z.enum(DOCUMENT_STATUSES);
+const statusSchema = z.enum(DOCUMENT_STATUSES, {
+  errorMap: () => ({ message: 'Choose a status from the list.' }),
+});
 
 /** `field:direction`, defaulting to newest first — what the list view wants. */
 const sortSchema = z
-  .enum(['createdAt:desc', 'createdAt:asc', 'filename:asc', 'filename:desc'])
+  .enum(['createdAt:desc', 'createdAt:asc', 'filename:asc', 'filename:desc'], {
+    errorMap: () => ({ message: 'Choose a sort order from the list.' }),
+  })
   .default('createdAt:desc')
   .transform((value) => {
     const [field, direction] = value.split(':') as ['createdAt' | 'filename', 'asc' | 'desc'];
@@ -124,16 +130,26 @@ export const listQuerySchema = z
   .object({
     status: repeatable(statusSchema),
     documentType: repeatable(documentTypeSchema),
-    search: z.string().trim().min(1).max(200).optional(),
-    from: z.coerce.date().optional(),
-    to: z.coerce.date().optional(),
-    page: z.coerce.number().int().positive().default(1),
+    search: z
+      .string()
+      .trim()
+      .min(1, 'Enter something to search for.')
+      .max(200, 'That search is too long.')
+      .optional(),
+    from: z.coerce.date({ invalid_type_error: 'Enter a valid start date.' }).optional(),
+    to: z.coerce.date({ invalid_type_error: 'Enter a valid end date.' }).optional(),
+    page: z.coerce.number().int().positive('Enter a valid page number.').default(1),
     // Capped: an uncapped page size lets one request read the whole table.
-    pageSize: z.coerce.number().int().positive().max(100).default(20),
+    pageSize: z.coerce
+      .number()
+      .int()
+      .positive('Enter a valid number of results per page.')
+      .max(100, 'You can show at most 100 documents at a time.')
+      .default(20),
     sort: sortSchema,
   })
   .refine((q) => !q.from || !q.to || q.from <= q.to, {
-    message: 'The "from" date must not be after the "to" date.',
+    message: 'The start date must come before the end date.',
     path: ['from'],
   });
 

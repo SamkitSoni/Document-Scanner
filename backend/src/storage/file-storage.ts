@@ -41,7 +41,7 @@ class DiskStorage implements FileStorage {
     try {
       return await readFile(this.resolveKey(key));
     } catch {
-      throw new NotFoundError('Stored file');
+      throw new NotFoundError('The stored document');
     }
   }
 

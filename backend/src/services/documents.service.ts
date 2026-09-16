@@ -34,11 +34,11 @@ export async function uploadDocument(input: UploadInput): Promise<UploadResult> 
   const { file, documentType, metadata } = input;
 
   if (!file) {
-    throw new ValidationError('A file is required.');
+    throw new ValidationError('Choose a PDF file to upload.');
   }
   if (!isPdf(file.buffer)) {
     throw new UnsupportedFileTypeError(
-      'The uploaded file is not a valid PDF. Only PDF documents are supported.',
+      'That file is not a PDF. Please upload a PDF document.',
     );
   }
 
@@ -140,7 +140,7 @@ export async function getHistory(documentId: string) {
   // Distinguish "no such document" from "a document with no events yet", which
   // would otherwise both return an empty array.
   const document = await documentsRepo.findById(documentId);
-  if (!document) throw new NotFoundError('Document');
+  if (!document) throw new NotFoundError('That document');
 
   return eventsRepo.listForDocument(documentId);
 }
@@ -170,7 +170,7 @@ export async function getDocumentFile(
   documentId: string,
 ): Promise<{ document: Document; data: Buffer }> {
   const document = await documentsRepo.findById(documentId);
-  if (!document) throw new NotFoundError('Document');
+  if (!document) throw new NotFoundError('That document');
 
   const data = await fileStorage.read(document.storageKey);
   return { document, data };
@@ -186,14 +186,21 @@ export async function getDocumentFile(
  */
 export async function retryDocument(documentId: string): Promise<Document> {
   const document = await documentsRepo.findById(documentId);
-  if (!document) throw new NotFoundError('Document');
+  if (!document) throw new NotFoundError('That document');
 
   if (document.status !== 'FAILED') {
-    throw new ConflictError(
+    // Never interpolate the raw status: 'RETRY_PENDING' is an internal constant,
+    // not a phrase. Each case gets the sentence that is true for it — telling
+    // someone to "wait for it to finish" when it already succeeded is worse
+    // than saying nothing.
+    const explanation =
       document.status === 'VALIDATION_FAILED'
-        ? 'This document was read successfully but its contents are invalid, so retrying would produce the same result.'
-        : `A document with status ${document.status} cannot be retried.`,
-    );
+        ? 'This document was read successfully, but the information in it did not pass our checks. Retrying will not change that — please upload a corrected document.'
+        : document.status === 'PROCESSED'
+          ? 'This document has already been processed successfully, so there is nothing to retry.'
+          : 'This document is still being processed. You can try again if it does not finish successfully.';
+
+    throw new ConflictError(explanation);
   }
 
   const retried = await documentsRepo.resetForManualRetry(documentId);

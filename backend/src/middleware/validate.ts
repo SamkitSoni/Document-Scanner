@@ -32,7 +32,7 @@ function toValidationError(err: unknown): unknown {
   if (err && typeof err === 'object' && 'issues' in err) {
     const issues = (err as { issues: Array<{ path: PropertyKey[]; message: string }> }).issues;
     return new ValidationError(
-      'The request contains invalid values.',
+      'Some details need fixing before we can continue.',
       issues.map((i) => ({ field: i.path.join('.'), message: i.message })),
     );
   }

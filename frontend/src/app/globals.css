@@ -3,76 +3,154 @@
 @tailwind utilities;
 
 /*
- * One neutral ramp plus one accent, defined as channels so Tailwind's
- * `<alpha-value>` works. Dark mode redefines only the tokens, so no component
- * needs a `dark:` variant for its basic colours.
+ * Tokens, not colours-at-the-call-site.
+ *
+ * Three groups, and the split is deliberate:
+ *   - surfaces/ink: the neutral ramp every layout uses;
+ *   - accent: the one brand colour, with a hover and a subtle wash;
+ *   - status: one variable trio per document state, so a status is defined once
+ *     and renders identically in a badge, a tile, a row and a timeline marker.
+ *
+ * Channels rather than hex, so Tailwind's `<alpha-value>` works everywhere.
+ *
+ * The app is light-only, on purpose: it is an operational tool shown to
+ * reviewers and demoed on machines whose OS theme we do not control, and a
+ * single theme is one thing to verify rather than two. `color-scheme: light`
+ * below is what stops the browser dark-shifting native controls (the date
+ * inputs, the sort select, scrollbars) on a dark-themed OS — without it the
+ * form controls go dark against light cards.
+ *
+ * Because every colour is a token, adding a theme later means redefining these
+ * variables under a selector, not revisiting any component.
  */
 :root {
-  --canvas: 248 250 252;
-  --surface: 255 255 255;
-  --line: 226 232 240;
-  --ink: 15 23 42;
-  --muted: 100 116 139;
-  --accent: 37 99 235;
-}
+  color-scheme: light;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: 2 6 23;
-    --surface: 15 23 42;
-    --line: 30 41 59;
-    --ink: 226 232 240;
-    --muted: 148 163 184;
-    --accent: 96 165 250;
-  }
+  --canvas: 247 248 250;
+  --surface: 255 255 255;
+  /* A second surface for headers, wells and hover rows — depth without a shadow. */
+  --surface-2: 249 250 252;
+  --line: 229 231 237;
+  /* A stronger rule for structural edges (table headers, dividers that matter). */
+  --line-strong: 214 218 226;
+  --ink: 17 22 34;
+  --ink-2: 63 71 88;
+  --muted: 108 117 136;
+
+  --accent: 43 91 220;
+  --accent-hover: 33 75 192;
+  --accent-wash: 238 243 255;
+  --accent-ink: 255 255 255;
+
+  --success: 13 136 88;
+  --success-wash: 236 250 243;
+  --warning: 176 106 10;
+  --warning-wash: 254 247 234;
+  --danger: 199 46 46;
+  --danger-wash: 254 241 241;
+  --info: 37 99 235;
+  --info-wash: 238 244 255;
+  --neutral: 100 110 130;
+  --neutral-wash: 243 245 248;
+
+  /* Elevation as tokens: three steps, used deliberately rather than ad hoc. */
+  --shadow-sm: 0 1px 2px 0 rgb(16 24 40 / 0.04), 0 1px 3px 0 rgb(16 24 40 / 0.06);
+  --shadow-md: 0 2px 4px -1px rgb(16 24 40 / 0.05), 0 4px 12px -2px rgb(16 24 40 / 0.08);
+  --shadow-lg: 0 8px 24px -4px rgb(16 24 40 / 0.10), 0 16px 40px -8px rgb(16 24 40 / 0.10);
 }
 
 @layer base {
   body {
     @apply bg-canvas text-ink antialiased;
+    /* Proportional-width figures look uneven in tables; `tnum` is opt-in per
+       element, but contextual alternates and kerning are wanted everywhere. */
+    font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
   }
 
-  /* A single visible focus treatment, so keyboard navigation is never guesswork. */
+  h1,
+  h2,
+  h3 {
+    @apply text-balance;
+  }
+
+  /* One visible focus treatment, so keyboard navigation is never guesswork. */
   :focus-visible {
-    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-canvas;
+    @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-canvas;
+  }
+
+  /* A quieter scrollbar for the panes that scroll independently (the timeline). */
+  .scroll-subtle {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line-strong)) transparent;
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-xl border border-line bg-surface;
+    @apply rounded-xl border border-line bg-surface shadow-sm;
+  }
+
+  /* An interactive card: lifts and warms its border on hover, so a clickable
+     panel is distinguishable from a static one before the cursor arrives. */
+  .card-interactive {
+    @apply card transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-md;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm
-           font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-lg px-3.5 py-2
+           text-sm font-medium leading-5 transition-all duration-150
+           disabled:pointer-events-none disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply btn bg-accent text-white hover:brightness-110;
+    @apply btn bg-accent text-accent-ink shadow-sm hover:bg-accent-hover hover:shadow-md active:scale-[0.98];
   }
 
   .btn-secondary {
-    @apply btn border border-line bg-surface text-ink hover:bg-canvas;
+    @apply btn border border-line bg-surface text-ink-2 shadow-sm
+           hover:border-line-strong hover:bg-surface-2 hover:text-ink active:scale-[0.98];
+  }
+
+  /* A third weight for in-context actions that should not compete with the
+     primary button (pagination, "view all", dismissals). */
+  .btn-ghost {
+    @apply btn text-muted hover:bg-surface-2 hover:text-ink active:scale-[0.98];
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
   }
 
   .field {
     @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
-           placeholder:text-muted focus:border-accent;
+           shadow-sm transition-colors placeholder:text-muted/70
+           hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25;
+  }
+
+  /* Native selects keep their arrow but lose the OS chrome that clashes with
+     the rest of the controls. */
+  select.field {
+    @apply cursor-pointer pr-8;
   }
 
   .label {
-    @apply mb-1.5 block text-sm font-medium text-ink;
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted;
+  }
+
+  /* A monospace chip for ids: scannable, and visibly a machine value. */
+  .code-chip {
+    @apply inline-flex items-center rounded border border-line bg-surface-2 px-1.5 py-0.5
+           font-mono text-[11px] leading-4 text-muted;
   }
 
   /* Skeletons: a shimmer over a neutral block, used where layout is known. */
   .skeleton {
-    @apply relative overflow-hidden rounded bg-line/70;
+    @apply relative overflow-hidden rounded-md bg-line/60;
   }
 
   .skeleton::after {
     @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r
-           from-transparent via-surface/60 to-transparent;
+           from-transparent via-surface/70 to-transparent;
     content: '';
   }
 }
@@ -84,5 +162,13 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Transforms are the part that causes trouble, not just their duration. */
+  .card-interactive:hover,
+  .btn-primary:active,
+  .btn-secondary:active,
+  .btn-ghost:active {
+    transform: none !important;
   }
 }

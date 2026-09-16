@@ -34,7 +34,7 @@ export class ApiError extends Error {
 }
 
 /** Shown when the server said nothing we can quote, or the network failed. */
-const GENERIC_MESSAGE = 'Something went wrong. Please try again.';
+const GENERIC_MESSAGE = 'Something went wrong on our end. Please try again in a moment.';
 
 interface ErrorEnvelope {
   error?: { code?: string; message?: string; correlationId?: string };
@@ -79,7 +79,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
     throw new ApiError(
       'NETWORK_ERROR',
-      'Could not reach the server. Check your connection and try again.',
+      'We could not reach the server. Check your internet connection and try again.',
       0,
     );
   }

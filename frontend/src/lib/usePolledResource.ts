@@ -74,7 +74,9 @@ export function usePolledResource<T>(
         // ApiError messages are already safe to render; anything else is
         // reported generically rather than leaking an internal string.
         setError(
-          cause instanceof ApiError ? cause.message : 'Something went wrong. Please try again.',
+          cause instanceof ApiError
+            ? cause.message
+            : 'Something went wrong on our end. Please try again in a moment.',
         );
       } finally {
         if (!cancelled) {

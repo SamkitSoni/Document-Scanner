@@ -26,7 +26,7 @@ export class ValidationError extends AppError {
 export class UnsupportedFileTypeError extends AppError {
   readonly statusCode = 415;
   readonly code = 'UNSUPPORTED_FILE_TYPE';
-  constructor(message = 'Only PDF files are supported.') {
+  constructor(message = 'That file is not a PDF. Please upload a PDF document.') {
     super(message);
   }
 }
@@ -39,8 +39,8 @@ export class FileTooLargeError extends AppError {
 export class NotFoundError extends AppError {
   readonly statusCode = 404;
   readonly code = 'NOT_FOUND';
-  constructor(resource = 'Resource') {
-    super(`${resource} was not found.`);
+  constructor(resource = 'What you asked for') {
+    super(`${resource} could not be found.`);
   }
 }
 
@@ -48,12 +48,4 @@ export class NotFoundError extends AppError {
 export class ConflictError extends AppError {
   readonly statusCode = 409;
   readonly code = 'CONFLICT';
-}
-
-export class InternalError extends AppError {
-  readonly statusCode = 500;
-  readonly code = 'INTERNAL_ERROR';
-  constructor(message = 'Something went wrong. Please try again.') {
-    super(message);
-  }
 }

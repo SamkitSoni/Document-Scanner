@@ -87,7 +87,7 @@ function normalise(err: unknown): Normalised {
       field: i.path.join('.'),
       message: i.message,
     }));
-    const wrapped = new ValidationError('The request contains invalid values.', fieldErrors);
+    const wrapped = new ValidationError('Some details need fixing before we can continue.', fieldErrors);
     return {
       statusCode: wrapped.statusCode,
       code: wrapped.code,
@@ -101,7 +101,7 @@ function normalise(err: unknown): Normalised {
   // would reach the client as opaque 500s.
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      const wrapped = new FileTooLargeError('The file exceeds the maximum upload size.');
+      const wrapped = new FileTooLargeError('That file is too large. Please upload a PDF of 10 MB or less.');
       return {
         statusCode: wrapped.statusCode,
         code: wrapped.code,
@@ -109,7 +109,7 @@ function normalise(err: unknown): Normalised {
         logCause: err,
       };
     }
-    const wrapped = new ValidationError('The upload could not be processed.');
+    const wrapped = new ValidationError('That upload could not be read. Please choose the file again.');
     return {
       statusCode: wrapped.statusCode,
       code: wrapped.code,

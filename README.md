@@ -465,6 +465,17 @@ logged against the same `correlationId` and never serialised to the client. This
 satisfies the requirement not to expose raw backend errors *structurally* — in
 one place — rather than relying on discipline at every call site.
 
+**Every message is written for the person reading it, not the developer
+debugging it.** That is a second, separate discipline from the envelope: a
+handler can be structurally correct and still emit `Invalid enum value. Expected
+'FINANCIAL_STATEMENT' | …`, which is what Zod produces by default and what the
+`details` array carried until it was overridden. So every schema names its own
+message (`Choose a document type from the list.`), no message interpolates an
+internal constant — a status like `RETRY_PENDING` is a database value, not a
+phrase — and the 404 handler no longer echoes the method and path back. Stable
+codes and causes stay in the logs and the `correlationId`, which is where a
+developer looks anyway.
+
 ### Upload validation
 
 - Declared MIME type must be `application/pdf`
@@ -623,12 +634,18 @@ is shareable and survives a refresh.
 by attempt, so a retry story reads clearly:
 
 ```
-✓  Uploaded            10:22:31
-✓  Processing          10:22:32   attempt 1
-✕  Failed              10:22:34   Processor timed out
-↻  Retrying            10:22:37   attempt 2
-✓  Processed           10:22:39
+●  Uploaded            10:22
+◉  Processing          10:22   attempt 1
+▲  Failed              10:22   Processor timed out
+↻  Retrying            10:22   attempt 2
+✓  Processed           10:22
 ```
+
+Each marker is a filled icon in the status's own colour, so the shape carries
+the meaning alongside the hue rather than the colour carrying it alone. Only the
+*current* step animates, and only while the document is still in flight — the
+timeline is a historical log, so a finished document still contains its past
+`Processing` entries and animating them on status alone would spin forever.
 
 **Polling:** a `usePolledResource` hook refetches only while something on screen
 is still in flight, and stops scheduling once every row is terminal — so an idle
@@ -643,11 +660,38 @@ regardless of what the body said. This mirrors the backend's own single-handler
 approach, so requirement 9 is enforced structurally on both sides rather than by
 discipline at each call site.
 
+**Design system.** Every colour is a CSS custom property in `globals.css`, mapped
+onto Tailwind utilities in `tailwind.config.ts` — a neutral ramp (`canvas`,
+`surface`, `surface-2`, `line`, `line-strong`, `ink`, `ink-2`, `muted`), one
+accent, and a semantic token per status family (`success`, `warning`, `danger`,
+`info`, `neutral`, each with a `-wash` for badge and banner backgrounds). No
+component hard-codes a colour, so a status's appearance changes in exactly one
+place.
+
+The app is **light-only**, deliberately: it is an operational tool demoed on
+machines whose OS theme we do not control, and one theme is one thing to verify
+rather than two. `color-scheme: light` is declared so the browser does not
+dark-shift native controls — the date inputs, the sort select and scrollbars —
+on a dark-themed OS, which would otherwise leave dark form controls sitting on
+light cards. Because everything is a token, adding a theme later means
+redefining the variables under a selector, not revisiting any component.
+
+Type is Inter with
+JetBrains Mono for ids and failure codes, both self-hosted by `next/font` — no
+render-blocking request and no layout shift from a late swap.
+
+Icons are a hand-rolled inline set (`components/Icon.tsx`) drawn on one 24px grid
+at a single stroke weight, rather than an icon package: the UI needs about a
+dozen glyphs, and a dependency shipping a thousand is not a trade worth making
+here. They are `aria-hidden` by default, because each one sits beside a text
+label that already carries the meaning.
+
 **Quality baseline:** loading skeletons rather than spinners where layout is
 known, empty states with a next action, toast notifications on transitions,
 labelled and keyboard-navigable form controls, a focus-visible ring throughout, a
 skip-to-content link, `aria-live` announcements when a document's status changes,
-`prefers-reduced-motion` honoured, and a card layout below the `md` breakpoint.
+`prefers-reduced-motion` honoured (transforms included, not just durations), and
+a card layout below the `md` breakpoint.
 
 ### Frontend layout
 
@@ -659,13 +703,17 @@ frontend/src/
 │   ├── upload/page.tsx         # upload form, duplicate/success/error states
 │   ├── documents/page.tsx      # filterable, paginated list
 │   └── documents/[id]/page.tsx # detail — fields, errors, timeline, preview
-├── components/  Nav · Filters · Timeline · Toast · ui.tsx
+├── components/  Nav · Filters · Timeline · Toast · Icon.tsx · ui.tsx
 └── lib/         api.ts · display.ts · types.ts · usePolledResource.ts
 ```
 
-`lib/display.ts` holds the single status→presentation mapping used by the table,
-the tiles and the timeline, so a status cannot be amber in one place and grey in
-another.
+`lib/display.ts` holds the single status→presentation mapping — label, badge
+tone, solid fill, text colour and icon — used by the table, the tiles, the badges
+and the timeline, so a status cannot be amber in one place and grey in another.
+`components/ui.tsx` holds the shared primitives (`StatusBadge`, `Card`,
+`Callout`, `PageHeader`, `Field`, empty and error states); `Callout` in
+particular is why a failure banner, an upload outcome and a "still processing"
+note cannot drift into three different treatments.
 
 ---
 
@@ -836,7 +884,29 @@ time into a container-only `node_modules` volume, and Docker does not repopulate
 an anonymous volume that already exists, so a plain `--build` would leave the
 old client in place.
 
+#### Keeping uploaded documents between sessions
+
+Documents and their files live in two named volumes, `postgres_data` and
+`uploads_data`. Stopping the stack keeps both:
+
+```bash
+docker compose down     # keeps your documents
+docker compose down -v  # DELETES every uploaded document and its file
+```
+
+`-v` destroys the volumes. That is what the clean-slate check below is for, and
+it is the right command when verifying a fresh start — but run it expecting to
+lose everything uploaded so far, because the database is the source of truth and
+a stored file with no row is invisible to the application.
+
 ### Without Docker
+
+> **A second, separate environment.** Running on the host does not share state
+> with Docker: files go to `backend/uploads/` instead of the `uploads_data`
+> volume, and `backend/.env` points at a local PostgreSQL rather than the
+> `postgres` container. Documents uploaded in one mode never appear in the
+> other. `npm test` also truncates whatever database `backend/.env` names, so
+> that database must not be one holding documents worth keeping.
 
 ```bash
 # PostgreSQL must be running locally
