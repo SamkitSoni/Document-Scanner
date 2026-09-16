@@ -39,6 +39,30 @@ if (process.env.TEST_DATABASE_URL) {
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 }
 
+// The suite truncates every table, so it must never point at a remote database.
+// `.env` legitimately holds a deployed DATABASE_URL — that is what applies
+// migrations — and `npm test` would then wipe production. A local host is the
+// only safe target: refuse anything else rather than discover it afterwards.
+{
+  const url = process.env.DATABASE_URL ?? '';
+  const host = (() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  })();
+  const isLocal =
+    host === '' || host === 'localhost' || host === '127.0.0.1' || host === 'postgres';
+  if (!isLocal) {
+    throw new Error(
+      `Refusing to run tests against a non-local database (host: ${host}).\n` +
+        'The suite truncates every table. Set TEST_DATABASE_URL to a local ' +
+        'database, or point DATABASE_URL at one.',
+    );
+  }
+}
+
 // Processing must be deterministic and instant in tests. The mock's simulated
 // delay is what makes a run feel realistic in a demo and slow in a suite; the
 // outcome is then decided by filename hints and content hash, never by chance.
