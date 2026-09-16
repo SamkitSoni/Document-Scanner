@@ -33,7 +33,13 @@ RUN npm ci --omit=dev
 COPY prisma ./prisma
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
+# The Prisma CLI is a devDependency, so `npm ci --omit=dev` above leaves it out.
+# It is copied in deliberately: `migrate deploy` runs at container start (see
+# `start:migrate`), because Render's free plan has no pre-deploy hook and a
+# Dockerfile build makes the dashboard's Build Command a no-op.
+COPY --from=build /app/node_modules/prisma ./node_modules/prisma
+COPY --from=build /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
 USER node
 EXPOSE 4000
-CMD ["npm", "run", "start"]
+CMD ["npm", "run", "start:migrate"]
