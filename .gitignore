@@ -44,3 +44,6 @@ Thumbs.db
 # ---- Not part of the submission ----
 # The assignment brief itself — the repo is the answer, not a copy of the question.
 SuretySeven_SDE1_Take_Home_Assignment.pdf
+
+# The build log — working context for this repo, not part of the submission.
+CLAUDE.md

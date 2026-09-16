@@ -39,6 +39,7 @@ COPY --from=build /app/dist ./dist
 # Dockerfile build makes the dashboard's Build Command a no-op.
 COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 COPY --from=build /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+COPY scripts ./scripts
 RUN mkdir -p /app/uploads && chown -R node:node /app/uploads
 USER node
 EXPOSE 4000

@@ -5,6 +5,13 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Migrations must not run over a connection pooler. Prisma guards
+  // `migrate deploy` with a session-scoped advisory lock, and pgbouncer can
+  // hand the release to a different backend than the one that took it, so the
+  // lock outlives the migration and every later deploy times out with P1002.
+  // The pooled URL stays here for the app; `start:migrate` passes the direct
+  // one to the CLI. Not `directUrl` — that errors when the var is unset, which
+  // would break `docker compose`, where there is no pooler to avoid.
 }
 
 /// Lifecycle of a document. UPLOADED and RETRY_PENDING are the claimable
